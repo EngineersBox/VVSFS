@@ -1,4 +1,4 @@
-# VVVSFS -- A very, very simple file system
+# VVSFS -- A very, very simple file system
 
 This filesystem is a very much slimmed down and simplified version of `ext2` file system. It is designed for pedagogical purposes, to demonstrate how some critical components of a filesystesm work in the Linux operating system. 
 
@@ -53,7 +53,7 @@ inode table:    [inode table        ]       4096 blocks
 data blocks:    [data blocks        ]      16384 blocks
 ```
 
-Since the inode bitmap is 512 bytes, it can encode the allocation status of up to 512*8 = 4096 inodes. Similarly, the 2KB data blocks bitmap can encode up to 2048*8 = 16384 data blocks. 
+Since the inode bitmap is 512 bytes, it can encode the allocation status of up to `512*8 = 4096` inodes. Similarly, the 2KB data blocks bitmap can encode up to `2048*8 = 16384` data blocks. 
 
 
 ## VFS operations
