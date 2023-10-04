@@ -74,7 +74,7 @@ static uint32_t vvsfs_find_free_block(uint8_t * map, uint32_t size)
     int i=0;
     uint8_t j=0;
 
-    for(i=0; i < size/8; ++i)
+    for(i=0; i < size; ++i)
     {
         for(j=0; j < 8; ++j)
         {
