@@ -1,0 +1,15 @@
+image: alpine:3.17
+
+build:
+  stage: build
+  tags:
+    - comp2300
+  before_script:
+    - apk add binutils gcc libc-dev make linux-lts-dev
+  script:
+    - cd vvsfs
+    - make KDIR=/lib/modules/5.15.133-0-lts/build
+  artifacts:
+    paths:
+      - vvsfs/mkfs.vvsfs
+      - vvsfs/vvsfs.ko
