@@ -1,4 +1,4 @@
-image: alpine:3.18
+image: alpine:3.17
 
 make:
   stage: build
@@ -8,7 +8,7 @@ make:
     - apk add binutils gcc libc-dev make alpine-sdk linux-lts-dev linux-headers
   script:
     - cd vvsfs
-    - make KDIR=/lib/modules/6.1.55-0-lts/build
+    - make KDIR=/lib/modules/5.15.133-0-lts/build
   artifacts:
     paths:
       - vvsfs/mkfs.vvsfs
