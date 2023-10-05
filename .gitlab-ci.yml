@@ -1,11 +1,11 @@
 image: alpine:3.17
 
-make:
+build:
   stage: build
   tags:
     - comp2300
   before_script:
-    - apk add binutils gcc libc-dev make alpine-sdk linux-lts-dev linux-headers
+    - apk add binutils gcc libc-dev make linux-lts-dev
   script:
     - cd vvsfs
     - make KDIR=/lib/modules/5.15.133-0-lts/build
