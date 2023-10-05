@@ -1,0 +1,15 @@
+image: alpine:3.18
+
+make:
+  stage: build
+  tags:
+    - comp2300
+  before_script:
+    - apk add binutils gcc libc-dev make
+  script:
+    - cd vvsfs
+    - make
+  artifacts:
+    paths:
+      - vvsfs/mkfs.vvsfs
+      - vvsfs/vvsfs.ko
