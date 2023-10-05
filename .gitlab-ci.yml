@@ -5,10 +5,10 @@ make:
   tags:
     - comp2300
   before_script:
-    - apk add binutils gcc libc-dev make alpine-sdk linux-lts-dev linux-headers linux-virt-dev
+    - apk add binutils gcc libc-dev make alpine-sdk linux-lts-dev linux-headers
   script:
     - cd vvsfs
-    - make -C /usr/src/linux-headers-6.1.55-0-lts
+    - make KDIR=/lib/modules/6.1.55-0-lts/build
   artifacts:
     paths:
       - vvsfs/mkfs.vvsfs
