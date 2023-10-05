@@ -1,0 +1,28 @@
+{
+    "configurations": [
+        {
+            "name": "linux",
+            "cStandard": "gnu17"
+        },
+        {
+            "name": "linux-kernel",
+            "includePath": [
+                "${KERNEL_PATH}/include",
+                "${KERNEL_PATH}/include/**",
+                "${KERNEL_PATH}/arch/x86/include",
+                "${KERNEL_PATH}/arch/x86/include/**"
+            ],
+            "compilerArgs": [
+                "-nostdinc",
+                "-include",
+                "${KERNEL_PATH}/include/linux/kconfig.h"
+            ],
+            "defines": [
+                "__KERNEL__",
+                "MODULE"
+            ],
+            "cStandard": "gnu11"
+        }
+    ],
+    "version": 4
+}
