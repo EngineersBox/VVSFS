@@ -583,6 +583,8 @@ static int vvsfs_write_inode(struct inode *inode,
 
     disk_inode = (struct vvsfs_inode *)((uint8_t *)bh->b_data + inode_offset);
     disk_inode->i_mode = inode->i_mode;
+    disk_inode->i_uid = i_uid_read(inode);
+    disk_inode->i_gid = i_gid_read(inode);
     disk_inode->i_size = inode->i_size;
     disk_inode->i_data_blocks_count = inode_info->i_db_count;
     disk_inode->i_links_count = inode->i_nlink;
@@ -693,6 +695,8 @@ struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino) {
 
     disk_inode = (struct vvsfs_inode *)(bh->b_data + inode_offset);
     inode->i_mode = disk_inode->i_mode;
+    i_uid_write(inode, disk_inode->i_uid);
+    i_gid_write(inode, disk_inode->i_gid);
     inode->i_size = disk_inode->i_size;
 
     // set the link count; note that we can't set inode->i_nlink directly; we
