@@ -40,6 +40,9 @@ struct vvsfs_inode {
     uint32_t i_uid;         // User id
     uint32_t i_gid;         // Group id
     uint32_t i_size;        // Size in bytes
+    uint32_t i_atime;       // Access time
+    uint32_t i_mtime;       // Modification time
+    uint32_t i_ctime;       // Creation time
     uint32_t i_links_count; /* Links count */
     uint32_t
         i_data_blocks_count;          /* Data block counts, for block size

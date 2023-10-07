@@ -586,6 +586,9 @@ static int vvsfs_write_inode(struct inode *inode,
     disk_inode->i_uid = i_uid_read(inode);
     disk_inode->i_gid = i_gid_read(inode);
     disk_inode->i_size = inode->i_size;
+    disk_inode->i_atime = inode->i_atime.tv_sec;
+    disk_inode->i_mtime = inode->i_mtime.tv_sec;
+    disk_inode->i_ctime = inode->i_ctime.tv_sec;
     disk_inode->i_data_blocks_count = inode_info->i_db_count;
     disk_inode->i_links_count = inode->i_nlink;
     for (i = 0; i < VVSFS_N_BLOCKS; ++i)
@@ -699,6 +702,15 @@ struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino) {
     i_gid_write(inode, disk_inode->i_gid);
     inode->i_size = disk_inode->i_size;
 
+    // set the access/modication/creation times
+    inode->i_atime.tv_sec = disk_inode->i_atime;
+    inode->i_mtime.tv_sec = disk_inode->i_mtime;
+    inode->i_ctime.tv_sec = disk_inode->i_ctime;
+    // minix sets the nsec's to 0
+    inode->i_atime.tv_nsec = 0;
+    inode->i_mtime.tv_nsec = 0;
+    inode->i_ctime.tv_nsec = 0;
+
     // set the link count; note that we can't set inode->i_nlink directly; we
     // need to use the set_nlink function here.
     set_nlink(inode, disk_inode->i_links_count);
@@ -709,11 +721,6 @@ struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino) {
     /* store data blocks in cache */
     for (i = 0; i < VVSFS_N_BLOCKS; ++i)
         inode_info->i_data[i] = disk_inode->i_block[i];
-
-    // Currently we just filled the various time information with the current
-    // time, since we don't keep this information on disk. You will need to
-    // change this if you save this information on disk.
-    inode->i_ctime = inode->i_mtime = inode->i_atime = current_time(inode);
 
     if (S_ISDIR(inode->i_mode)) {
         inode->i_op = &vvsfs_dir_inode_operations;
