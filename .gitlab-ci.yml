@@ -8,7 +8,7 @@ build:
     - apk add binutils gcc libc-dev make linux-lts-dev
   script:
     - cd vvsfs
-    - make KDIR=/lib/modules/5.15.133-0-lts/build
+    - make KDIR=/lib/modules/*/build
   artifacts:
     paths:
       - vvsfs/mkfs.vvsfs
