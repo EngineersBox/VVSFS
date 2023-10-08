@@ -27,6 +27,13 @@
 
 #define DEBUG 1
 
+#if DEBUG
+#define DEBUG_LOG(msg, ...)                                                    \
+    printk("%s(%s:%d) :: " #msg, __func__, __FILE__, __LINE__, __VA_ARGS__)
+#else
+#define DEBUG_LOG(msg, ...) ({})
+#endif
+
 // inode cache -- this is used to attach vvsfs specific inode
 // data to the vfs inode
 static struct kmem_cache *vvsfs_inode_cache;
@@ -606,6 +613,99 @@ vvsfs_mkdir(struct mnt_idmap *namespace,
     return vvsfs_create(namespace, dir, dentry, mode | S_IFDIR, 0);
 }
 
+static inline void
+vvsfs_update_dirent_ni(char *ptr, char **name, __u32 *inumber) {
+    struct vvsfs_dirent *de = (struct vvsfs_dirent *)ptr;
+    *name = de->name;
+    *inumber = de->inode;
+}
+
+static unsigned vvsfs_last_byte(struct inode *inode, unsigned long page_nr) {
+    unsigned last_byte = PAGE_SIZE;
+    if (page_nr == (inode->i_size >> PAGE_SHIFT))
+        last_byte = inode->i_size & (PAGE_SIZE - 1);
+    return last_byte;
+}
+
+static inline void *vvsfs_next_entry(void *de, struct vvsfs_sb_info *sbi) {
+    return (void *)((char *)de + sbi->s_dirsize);
+}
+
+static inline int
+namecmp(int len, int maxlen, const char *name, const char *buffer) {
+    if (len < maxlen && buffer[len])
+        return 0;
+    return !memcmp(name, buffer, len);
+}
+
+static vvsfs_dir_entry *vvsfs_find_entry(struct dentry *dentry,
+                                         struct page **res_page) {
+    const char *name = dentry->d_name.name;
+    int namelen = dentry->d_name.len;
+    struct inode *dir = d_inode(dentry->d_parent);
+    struct super_block *sb = dir->i_sb;
+    struct vvsfs_sb_info *sbi = (struct vvsfs_sb_info *)sb->s_fs_info;
+    unsigned long npages = dir_pages(dir);
+    struct page *page = NULL;
+    char *p;
+    char *namx;
+    __u32 inumber;
+    *res_page = NULL;
+    char *kaddr, *limit;
+    for (unsigned long n = 0; n < npages; n++) {
+        page = dir_get_page(dir, n);
+        if (page == NULL) continue; // TODO: Error check here for errno as ptr
+        kaddr = (char *)page_address(page);
+        limit = kaddr + vvsfs_last_byte(dir, n) - sbi->s_dirsize;
+        for (p = kaddr; p <= limit; p = vvsfs_next_entry(p, sbi)) {
+            vvsfs_update_dirent_ni(p, &namx, &inumber);
+            if (!inumber)
+                continue;
+            if (unlikely(namecmp(namelen, sbi->s_namelen, name, namx)))
+                goto found;
+        }
+        dir_put_page(page);
+    }
+    return NULL;
+
+found:
+    *res_page = page;
+    return (vvsfs_dirent *)p;
+}
+
+static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
+    int err = -ENOENT;
+    struct inode *inode = d_inode(dentry);
+    struct page *page;
+    struct vvsfs_dir_entry *de;
+    de = vvsfs_find_entry(dentry, &page);
+    if (!de)
+        return err;
+    err = vvsfs_delete_entry(de, page);
+    if (err)
+        return err;
+    inode->i_ctime = dir->i_ctime;
+    inode_dec_link_count(inode);
+    return err;
+}
+
+static int vvsfs_rmdir(struct inode *dir, struct dentry *dentry) {
+    struct inode *inode = d_inode(dentry);
+    int err = -ENOTEMPTY;
+    if (!vvsfs_empty_dir(inode)) {
+        printk("vvsfs - rmdir - directory not empty\n");
+        return err;
+    } else if ((err = vvsfs_unlink(dir, dentry))) {
+        DEBUG_LOG("vvsfs - rmdir - unlink error: %s\n", strerr(err));
+        return err;
+    }
+    inode->i_size = 0;
+    inode_dec_link_count(inode);
+    inode_dec_link_count(dir);
+    DEBUG_LOG("Removed directory %ld\n", inode->i_ino);
+    return err;
+}
+
 // File operations; leave as is. We are using the generic VFS implementations
 // to take care of read/write/seek/fsync. The read/write operations rely on the
 // address space operations, so there's no need to modify these.
@@ -636,6 +736,8 @@ static struct inode_operations vvsfs_dir_inode_operations = {
     .lookup = vvsfs_lookup,
     .mkdir = vvsfs_mkdir,
     .link = vvsfs_link,
+    .rmdir = vvsfs_rmdir,
+    .unlink = vvsfs_unlink,
 };
 
 // This implements the super operation for writing a 'dirty' inode to disk
