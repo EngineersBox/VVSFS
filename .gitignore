@@ -57,4 +57,4 @@ dkms.conf
 c_cpp_properties.json
 mkfs.vvsfs
 *.img
-test*
+test*/

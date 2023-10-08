@@ -13,3 +13,7 @@ kernel_mod:
 clean: 
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
 	rm -f mkfs.vvsfs  
+
+load_driver: kernel_mod
+	- sudo rmmod vvsfs
+	sudo insmod vvsfs.ko

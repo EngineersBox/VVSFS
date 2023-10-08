@@ -37,18 +37,18 @@ inode size: 256 bytes
 
 struct vvsfs_inode {
     uint32_t i_mode;
-    uint32_t i_uid;         // User id
-    uint32_t i_gid;         // Group id
     uint32_t i_size;        // Size in bytes
-    uint32_t i_atime;       // Access time
-    uint32_t i_mtime;       // Modification time
-    uint32_t i_ctime;       // Creation time
     uint32_t i_links_count; /* Links count */
     uint32_t
         i_data_blocks_count;          /* Data block counts, for block size
                                          VVSFS_BLOCKSIZE.     Note that this may not be
                                          the same as VFS inode i_blocks member. */
     uint32_t i_block[VVSFS_N_BLOCKS]; /* Pointers to blocks */
+    uint32_t i_uid;                   // User id
+    uint32_t i_gid;                   // Group id
+    uint32_t i_atime;                 // Access time
+    uint32_t i_mtime;                 // Modification time
+    uint32_t i_ctime;                 // Creation time
 };
 
 #define VVSFS_MAXNAME 123 // maximum size of filename
