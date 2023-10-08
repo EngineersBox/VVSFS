@@ -119,7 +119,7 @@ static int vvsfs_write_begin(struct file *file,
     printk("vvsfs - write_begin");
 
     if (pos + len > VVSFS_MAXFILESIZE)
-        return -ENOSPC;
+        return -EFBIG;
 
     return block_write_begin(
         mapping, pos, len, flags, pagep, vvsfs_file_get_block);
@@ -155,10 +155,10 @@ static int vvsfs_write_end(struct file *file,
 }
 
 static struct address_space_operations vvsfs_as_operations = {
-    readpage : vvsfs_readpage,
-    writepage : vvsfs_writepage,
-    write_begin : vvsfs_write_begin,
-    write_end : vvsfs_write_end,
+    .readpage = vvsfs_readpage,
+    .writepage = vvsfs_writepage,
+    .write_begin = vvsfs_write_begin,
+    .write_end = vvsfs_write_end,
 };
 
 // vvsfs_readdir - reads a directory and places the result using filldir
@@ -526,10 +526,10 @@ static int vvsfs_mkdir(struct user_namespace *namespace,
 // to take care of read/write/seek/fsync. The read/write operations rely on the
 // address space operations, so there's no need to modify these.
 static struct file_operations vvsfs_file_operations = {
-    llseek : generic_file_llseek,
-    fsync : generic_file_fsync,
-    read_iter : generic_file_read_iter,
-    write_iter : generic_file_write_iter,
+    .llseek = generic_file_llseek,
+    .fsync = generic_file_fsync,
+    .read_iter = generic_file_read_iter,
+    .write_iter = generic_file_write_iter,
 };
 
 static struct inode_operations vvsfs_file_inode_operations = {
@@ -544,9 +544,9 @@ static struct file_operations vvsfs_dir_operations = {
 };
 
 static struct inode_operations vvsfs_dir_inode_operations = {
-    create : vvsfs_create,
-    lookup : vvsfs_lookup,
-    mkdir : vvsfs_mkdir,
+    .create = vvsfs_create,
+    .lookup = vvsfs_lookup,
+    .mkdir = vvsfs_mkdir,
 };
 
 // This implements the super operation for writing a 'dirty' inode to disk
@@ -583,7 +583,12 @@ static int vvsfs_write_inode(struct inode *inode,
 
     disk_inode = (struct vvsfs_inode *)((uint8_t *)bh->b_data + inode_offset);
     disk_inode->i_mode = inode->i_mode;
+    disk_inode->i_uid = i_uid_read(inode);
+    disk_inode->i_gid = i_gid_read(inode);
     disk_inode->i_size = inode->i_size;
+    disk_inode->i_atime = inode->i_atime.tv_sec;
+    disk_inode->i_mtime = inode->i_mtime.tv_sec;
+    disk_inode->i_ctime = inode->i_ctime.tv_sec;
     disk_inode->i_data_blocks_count = inode_info->i_db_count;
     disk_inode->i_links_count = inode->i_nlink;
     for (i = 0; i < VVSFS_N_BLOCKS; ++i)
@@ -693,7 +698,18 @@ struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino) {
 
     disk_inode = (struct vvsfs_inode *)(bh->b_data + inode_offset);
     inode->i_mode = disk_inode->i_mode;
+    i_uid_write(inode, disk_inode->i_uid);
+    i_gid_write(inode, disk_inode->i_gid);
     inode->i_size = disk_inode->i_size;
+
+    // set the access/modication/creation times
+    inode->i_atime.tv_sec = disk_inode->i_atime;
+    inode->i_mtime.tv_sec = disk_inode->i_mtime;
+    inode->i_ctime.tv_sec = disk_inode->i_ctime;
+    // minix sets the nsec's to 0
+    inode->i_atime.tv_nsec = 0;
+    inode->i_mtime.tv_nsec = 0;
+    inode->i_ctime.tv_nsec = 0;
 
     // set the link count; note that we can't set inode->i_nlink directly; we
     // need to use the set_nlink function here.
@@ -705,11 +721,6 @@ struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino) {
     /* store data blocks in cache */
     for (i = 0; i < VVSFS_N_BLOCKS; ++i)
         inode_info->i_data[i] = disk_inode->i_block[i];
-
-    // Currently we just filled the various time information with the current
-    // time, since we don't keep this information on disk. You will need to
-    // change this if you save this information on disk.
-    inode->i_ctime = inode->i_mtime = inode->i_atime = current_time(inode);
 
     if (S_ISDIR(inode->i_mode)) {
         inode->i_op = &vvsfs_dir_inode_operations;
@@ -899,12 +910,12 @@ static int vvsfs_sync_fs(struct super_block *sb, int wait) {
 }
 
 static struct super_operations vvsfs_ops = {
-    statfs : vvsfs_statfs,
-    put_super : vvsfs_put_super,
-    alloc_inode : vvsfs_alloc_inode,
-    destroy_inode : vvsfs_destroy_inode,
-    write_inode : vvsfs_write_inode,
-    sync_fs : vvsfs_sync_fs,
+    .statfs = vvsfs_statfs,
+    .put_super = vvsfs_put_super,
+    .alloc_inode = vvsfs_alloc_inode,
+    .destroy_inode = vvsfs_destroy_inode,
+    .write_inode = vvsfs_write_inode,
+    .sync_fs = vvsfs_sync_fs,
 };
 
 // mounting the file system -- leave as is.
