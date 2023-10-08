@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
     // Root inode: occupies first data block
     memset(block, 0, VVSFS_BLOCKSIZE);
     for (i = 0; i < VVSFS_N_BLOCKS; ++i)
-        inode.i_block[1] = 0;
+        inode.i_block[i] = 0;
     inode.i_mode = S_IFDIR | S_IRUSR | S_IRGRP | S_IROTH | S_IWUSR | S_IWGRP |
                    S_IWOTH | S_IXUSR | S_IXGRP | S_IXOTH;
     printf("Mode: %d\n", inode.i_mode);

@@ -90,13 +90,22 @@ static int vvsfs_file_get_block(struct inode *inode,
     return 0;
 }
 
-// Address pace operation readpage.
+// Address pace operation readpage/readfolio.
 // You do not need to modify this.
-static int vvsfs_readpage(struct file *file, struct page *page) {
+static int
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
+vvsfs_readpage(struct file *file, struct page *page) {
     if (DEBUG)
         printk("vvsfs - readpage");
     return mpage_readpage(page, vvsfs_file_get_block);
 }
+#else
+vvsfs_read_folio(struct file *file, struct folio *folio) {
+    if (DEBUG)
+        printk("vvsfs - read folio");
+    return mpage_read_folio(folio, vvsfs_file_get_block);
+}
+#endif
 
 // Address pace operation readpage.
 // You do not need to modify this.
@@ -113,7 +122,9 @@ static int vvsfs_write_begin(struct file *file,
                              struct address_space *mapping,
                              loff_t pos,
                              unsigned int len,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
                              unsigned int flags,
+#endif
                              struct page **pagep,
                              void **fsdata) {
     printk("vvsfs - write_begin");
@@ -121,8 +132,12 @@ static int vvsfs_write_begin(struct file *file,
     if (pos + len > VVSFS_MAXFILESIZE)
         return -EFBIG;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
     return block_write_begin(
         mapping, pos, len, flags, pagep, vvsfs_file_get_block);
+#else
+    return block_write_begin(mapping, pos, len, pagep, vvsfs_file_get_block);
+#endif
 }
 
 // Address pace operation readpage.
@@ -155,10 +170,15 @@ static int vvsfs_write_end(struct file *file,
 }
 
 static struct address_space_operations vvsfs_as_operations = {
-    .readpage = vvsfs_readpage,
-    .writepage = vvsfs_writepage,
-    .write_begin = vvsfs_write_begin,
-    .write_end = vvsfs_write_end,
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
+    readpage : vvsfs_readpage,
+#else
+    read_folio : vvsfs_read_folio,
+#endif
+    writepage : vvsfs_writepage,
+    write_begin : vvsfs_write_begin,
+    write_end : vvsfs_write_end,
 };
 
 // vvsfs_readdir - reads a directory and places the result using filldir
@@ -351,7 +371,11 @@ struct inode *vvsfs_new_inode(const struct inode *dir, umode_t mode) {
     }
 
     // fill in various information for the VFS inode.
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
     inode_init_owner(&init_user_ns, inode, dir, mode);
+#else
+    inode_init_owner(&nop_mnt_idmap, inode, dir, mode);
+#endif
     inode->i_ino = ino;
     inode->i_ctime = inode->i_mtime = inode->i_atime = current_time(inode);
     inode->i_mode = mode;
@@ -467,11 +491,16 @@ static int vvsfs_add_new_entry(struct inode *dir,
 
 // The "create" operation for inode.
 // This is called when a new file/directory is created.
-static int vvsfs_create(struct user_namespace *namespace,
-                        struct inode *dir,
-                        struct dentry *dentry,
-                        umode_t mode,
-                        bool excl) {
+static int
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
+vvsfs_create(struct user_namespace *namespace,
+#else
+vvsfs_create(struct mnt_idmap *namespace,
+#endif
+             struct inode *dir,
+             struct dentry *dentry,
+             umode_t mode,
+             bool excl) {
     struct vvsfs_inode_info *dir_info;
     int ret;
     struct buffer_head *bh;
@@ -515,10 +544,15 @@ static int vvsfs_create(struct user_namespace *namespace,
 
 // The `mkdir` operation for directory. It simply calls vvsfs_create, with the
 // added flag of S_IFDIR (signifying this is a directory).
-static int vvsfs_mkdir(struct user_namespace *namespace,
-                       struct inode *dir,
-                       struct dentry *dentry,
-                       umode_t mode) {
+static int
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
+vvsfs_mkdir(struct user_namespace *namespace,
+#else
+vvsfs_mkdir(struct mnt_idmap *namespace,
+#endif
+            struct inode *dir,
+            struct dentry *dentry,
+            umode_t mode) {
     return vvsfs_create(namespace, dir, dentry, mode | S_IFDIR, 0);
 }
 
@@ -539,7 +573,11 @@ static struct inode_operations vvsfs_file_inode_operations = {
 static struct file_operations vvsfs_dir_operations = {
     .llseek = generic_file_llseek,
     .read = generic_read_dir,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
     .iterate = vvsfs_readdir,
+#else
+    .iterate_shared = vvsfs_readdir,
+#endif
     .fsync = generic_file_fsync,
 };
 
@@ -848,7 +886,11 @@ static int vvsfs_fill_super(struct super_block *s, void *data, int silent) {
     }
 
     /* Initialise the owner */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
     inode_init_owner(&init_user_ns, root_inode, NULL, root_inode->i_mode);
+#else
+    inode_init_owner(&nop_mnt_idmap, root_inode, NULL, root_inode->i_mode);
+#endif
     mark_inode_dirty(root_inode);
 
     s->s_root = d_make_root(root_inode);
