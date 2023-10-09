@@ -615,9 +615,9 @@ vvsfs_mkdir(struct mnt_idmap *namespace,
 
 static inline void
 vvsfs_update_dirent_ni(char *ptr, char **name, __u32 *inumber) {
-    struct vvsfs_dirent *de = (struct vvsfs_dirent *)ptr;
+    struct vvsfs_dir_entry *de = (struct vvsfs_dir_entry *)ptr;
     *name = de->name;
-    *inumber = de->inode;
+    *inumber = de->inode_number;
 }
 
 static unsigned vvsfs_last_byte(struct inode *inode, unsigned long page_nr) {
@@ -627,8 +627,8 @@ static unsigned vvsfs_last_byte(struct inode *inode, unsigned long page_nr) {
     return last_byte;
 }
 
-static inline void *vvsfs_next_entry(void *de, struct vvsfs_sb_info *sbi) {
-    return (void *)((char *)de + sbi->s_dirsize);
+static inline void *vvsfs_next_entry(void *de) {
+    return (void *)((char *)de + sizeof(struct vvsfs_dir_entry));
 }
 
 static inline int
@@ -638,58 +638,100 @@ namecmp(int len, int maxlen, const char *name, const char *buffer) {
     return !memcmp(name, buffer, len);
 }
 
-static vvsfs_dir_entry *vvsfs_find_entry(struct dentry *dentry,
+static struct page* dir_get_page(struct inode* dir, unsigned long n) {
+	struct address_space* mapping = dir->i_mapping;
+	struct page* page = read_mapping_page(mapping, n, NULL);
+	if (!IS_ERR(page)) {
+		kmap(page);
+	}
+	return page;
+}
+
+static inline void dir_put_page(struct page* page) {
+	kunmap(page);
+	put_page(page);
+}
+
+#define for_entries(ptr, base_addr, _limit) for ((ptr) = (base_addr); (ptr) < (_limit); (ptr) = vvsfs_next_entry((ptr)))
+
+static inline void vvsfs_init_entries_iter(struct page* page, struct inode* dir, unsigned long n, char** kaddr, char** limit) {
+	*kaddr = (char *)page_address(page);
+	*limit = *kaddr + vvsfs_last_byte(dir, n) - sizeof(struct vvsfs_dir_entry);
+}
+
+static struct vvsfs_dir_entry *vvsfs_find_entry(struct dentry *dentry,
                                          struct page **res_page) {
+	char *p;
+	char *current_name;
+	char *kaddr;
+	char *limit;
+	unsigned long n;
+	__u32 inumber;
     const char *name = dentry->d_name.name;
     int namelen = dentry->d_name.len;
     struct inode *dir = d_inode(dentry->d_parent);
-    struct super_block *sb = dir->i_sb;
-    struct vvsfs_sb_info *sbi = (struct vvsfs_sb_info *)sb->s_fs_info;
     unsigned long npages = dir_pages(dir);
     struct page *page = NULL;
-    char *p;
-    char *current_name;
-    __u32 inumber;
     *res_page = NULL;
-    char *kaddr, *limit;
-    for (unsigned long n = 0; n < npages; n++) {
+    for (n = 0; n < npages; n++) {
         page = dir_get_page(dir, n);
-        if (page == NULL) {
-			DEBUG_LOG("vvsfs - find_entry - page is null for %d @ %zu\n", dir->i_ino, n);
-            continue; // TODO: Error check here for errno as ptr
-		}
-        kaddr = (char *)page_address(page);
-        limit = kaddr + vvsfs_last_byte(dir, n) - sbi->s_dirsize;
-        for (p = kaddr; p <= limit; p = vvsfs_next_entry(p, sbi)) {
+        if (IS_ERR(page)) {
+            DEBUG_LOG("vvsfs - find_entry - page is null for %zu @ %zu\n",
+                      dir->i_ino,
+                      n);
+            continue;
+        }
+		vvsfs_init_entries_iter(page, dir, n, &kaddr, &limit);
+        for_entries(p, kaddr, limit) {
             vvsfs_update_dirent_ni(p, &current_name, &inumber);
-			DEBUG_LOG("vvsfs - find_entry - current: [%s] inumber: [%d]\n", current_name, inumber);
+            DEBUG_LOG("vvsfs - find_entry - current: [%s] inumber: [%d]\n",
+                      current_name,
+                      inumber);
             if (inumber && unlikely(namecmp(
-                               namelen, sbi->s_namelen, name, current_name))) {
-				DEBUG_LOG("vvsfs - find_entry - found match: %s\n", current_name);
+                               namelen, VVSFS_MAXNAME, name, current_name))) {
+                DEBUG_LOG("vvsfs - find_entry - found match: %s\n",
+                          current_name);
                 *res_page = page;
-                return (vvsfs_dirent *)p;
+                return (struct vvsfs_dir_entry *)p;
             }
         }
         dir_put_page(page);
     }
-	DEBUG_LOG("vvsfs - find_entry - no match found for %s\n", name);
+    DEBUG_LOG("vvsfs - find_entry - no match found for %s\n", name);
     return NULL;
 }
 
+static int dir_commit_chunk(struct page* page, loff_t pos, unsigned len) {
+	struct address_space* mapping = page->mapping;
+	struct inode* dir = mapping->host;
+	int err = vvsfs_write_end(NULL, mapping, pos, len, len, page, NULL);
+	if (pos + len > dir->i_size) {
+		i_size_write(dir, pos+len);
+		mark_inode_dirty(dir);
+	}
+	if (IS_DIRSYNC(dir)) {
+		err = write_one_page(page);
+	} else {
+		unlock_page(page);
+	}
+	return err;
+}
+
 static int vvsfs_delete_entry(struct vvsfs_dir_entry *de, struct page *page) {
-    struct inode *inode = page->mapping->host;
+	int err;
+	struct address_space* mapping = page->mapping;
+    struct inode *inode = mapping->host;
     char *kaddr = page_address(page);
     loff_t pos = page_offset(page) + (char *)de - kaddr;
-    struct vvsfs_sb_info *sbi = (struct vvsfs_sb_info *)inode->i_sb;
-    unsigned len = sbi->s_dirsize;
-    int err;
-
+    unsigned len = sizeof(struct vvsfs_dir_entry);
     lock_page(page);
-    err = vvsfs_prepare_chunk(page, pos, len);
+	struct page* page_ref[1] = { page };
+	err = vvsfs_write_begin(NULL, mapping, pos, len, (struct page**) page_ref, NULL);
     if (err == 0) {
-        de->inode = 0;
+        de->inode_number = 0;
         err = dir_commit_chunk(page, pos, len);
     } else {
+		DEBUG_LOG("vvsfs- delete_entry - error during write init %d\n", err);
         unlock_page(page);
     }
     dir_put_page(page);
@@ -704,14 +746,48 @@ static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
     struct page *page;
     struct vvsfs_dir_entry *de;
     de = vvsfs_find_entry(dentry, &page);
-    if (!de)
+    if (!de) {
+		DEBUG_LOG("vvsfs - unlink - failed to find entry\n");
         return err;
+	}
     err = vvsfs_delete_entry(de, page);
-    if (err)
+    if (err) {
+		DEBUG_LOG("vvsfs - unlink - failed to delete entry\n");
         return err;
+	}
     inode->i_ctime = dir->i_ctime;
     inode_dec_link_count(inode);
     return err;
+}
+
+static int vvsfs_empty_dir(struct inode* dir) {
+	unsigned long n;
+	char* name;
+	char* p;
+	char* kaddr;
+	char* limit;
+	__u32 inumber;
+	struct page* page = NULL;
+	unsigned long npages = dir_pages(dir);
+	for (n = 0; n < npages; n++) {
+		page = dir_get_page(dir, 1);
+		if (IS_ERR(page)) {
+			DEBUG_LOG("vvsfs - empty_dir - error getting page: %d\n", (int) ((uintptr_t) page));
+			continue;
+		}
+		vvsfs_init_entries_iter(page, dir, n, &kaddr, &limit);
+		for_entries(p, kaddr, limit) {
+			vvsfs_update_dirent_ni(p, &name, &inumber);
+			if (inumber == 0) {
+				continue;
+			} else if (name[0] != '.' || (!name[1] && inumber != dir->i_ino) || name[1] != '.' || name[2]) {
+				dir_put_page(page);
+				return 0;
+			}
+		}
+		dir_put_page(page);
+	}
+	return 1;
 }
 
 static int vvsfs_rmdir(struct inode *dir, struct dentry *dentry) {
@@ -721,7 +797,7 @@ static int vvsfs_rmdir(struct inode *dir, struct dentry *dentry) {
         printk("vvsfs - rmdir - directory not empty\n");
         return err;
     } else if ((err = vvsfs_unlink(dir, dentry))) {
-        DEBUG_LOG("vvsfs - rmdir - unlink error: %s\n", strerr(err));
+        DEBUG_LOG("vvsfs - rmdir - unlink error: %d\n", err);
         return err;
     }
     inode->i_size = 0;
