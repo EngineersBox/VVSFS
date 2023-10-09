@@ -1,6 +1,6 @@
 source ./assert.sh
 
-echo Testing access modification
+log_header "Testing access modification"
 
 ./create.sh
 

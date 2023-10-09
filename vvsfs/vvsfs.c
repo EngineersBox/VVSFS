@@ -172,13 +172,13 @@ static int vvsfs_write_end(struct file *file,
 static struct address_space_operations vvsfs_as_operations = {
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
-    readpage : vvsfs_readpage,
+    .readpage = vvsfs_readpage,
 #else
-    read_folio : vvsfs_read_folio,
+    .read_folio = vvsfs_read_folio,
 #endif
-    writepage : vvsfs_writepage,
-    write_begin : vvsfs_write_begin,
-    write_end : vvsfs_write_end,
+    .writepage = vvsfs_writepage,
+    .write_begin = vvsfs_write_begin,
+    .write_end = vvsfs_write_end,
 };
 
 // vvsfs_readdir - reads a directory and places the result using filldir

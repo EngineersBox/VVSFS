@@ -1,6 +1,6 @@
 source ./assert.sh
 
-echo Testing uid gid
+log_header "Testing uid gid"
 
 ./create.sh
 

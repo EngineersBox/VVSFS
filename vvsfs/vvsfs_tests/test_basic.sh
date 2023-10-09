@@ -1,6 +1,6 @@
 source ./assert.sh
 
-echo Testing basic
+log_header "Testing basic"
 
 ./create.sh
 
