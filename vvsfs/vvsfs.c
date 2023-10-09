@@ -29,7 +29,7 @@
 
 #if DEBUG
 #define DEBUG_LOG(msg, ...)                                                    \
-    printk("%s(%s:%d) :: " #msg, __func__, __FILE__, __LINE__, ##__VA_ARGS__)
+    printk("%s(%s:%d) :: " msg, __func__, __FILE__, __LINE__, ##__VA_ARGS__)
 #else
 #define DEBUG_LOG(msg, ...) ({})
 #endif
@@ -638,10 +638,16 @@ namecmp(int len, int maxlen, const char *name, const char *buffer) {
     return !memcmp(name, buffer, len);
 }
 
-static struct page *dir_get_page(struct inode *dir, unsigned long n) {
+static struct page *dir_get_page(struct inode *dir, pgoff_t n) {
     struct address_space *mapping = dir->i_mapping;
+	struct page* test_page = find_get_page(mapping, n);
+	DEBUG_LOG("vvsfs - dir_get_page - test_page: %p\n", (uintptr_t) test_page); // FIXME: Returns NULL 0x0
+    DEBUG_LOG("vvsfs - dir_get_page - mapping: %p\n", (uintptr_t)mapping);
+	DEBUG_LOG("vvsfs - dir_get_page - retrieving %zu\n", n);
     struct page *page = read_mapping_page(mapping, n, NULL);
+	DEBUG_LOG("vvsfs - dir_get_page - page: %p\n", (uintptr_t) page);
     if (!IS_ERR(page)) {
+		DEBUG_LOG("vvsfs - dir_get_page - page is error, kmap\n");
         kmap(page);
     }
     return page;
@@ -677,15 +683,20 @@ static struct vvsfs_dir_entry *vvsfs_find_entry(struct dentry *dentry,
     int namelen = dentry->d_name.len;
     struct inode *dir = d_inode(dentry->d_parent);
     unsigned long npages = dir_pages(dir);
+    DEBUG_LOG("vvsfs - find_entry - d_parent: %d\n", (uintptr_t)dir);
     struct page *page = NULL;
     *res_page = NULL;
     DEBUG_LOG("vvsfs - find_entry - page count %zu\n", npages);
     for (n = 0; n < npages; n++) {
+		vvsfs_readpage(null, &page);
         page = dir_get_page(dir, n);
+        DEBUG_LOG("vvsfs - find_entry - retrieved page @ %p\n",
+                  (uintptr_t)page);
         if (IS_ERR(page)) {
-            DEBUG_LOG("vvsfs - find_entry - page is null for %zu @ %zu: %d\n",
-                      dir->i_ino,
+            DEBUG_LOG("vvsfs - find_entry - error getting page %zu for inode "
+                      "%zu: %d\n",
                       n,
+                      dir->i_ino,
                       PTR_ERR(page));
             continue;
         }
@@ -760,8 +771,17 @@ static int vvsfs_delete_entry(struct vvsfs_dir_entry *de, struct page *page) {
     dir_put_page(page);
     inode->i_ctime = inode->i_mtime = current_time(inode);
     mark_inode_dirty(inode);
-    DEBUG_LOG("vvsfs - delete_entry - marked inode dirty: %d\n", inode->i_ino)
+    DEBUG_LOG("vvsfs - delete_entry - marked inode dirty: %d\n", inode->i_ino);
     return err;
+}
+
+static int vvsfs_find_entry2(struct dentry* dentry) {
+	const char* name = dentry->d_name.name;
+	struct dir_context ctx = (struct dir_context) {
+		.actor =
+		.pos = 0;
+	};
+	vvsfs_readdir(NULL, ctx); // TODO: Pull the dirent emit code from this method, and use it to find the matching entry by name
 }
 
 static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
@@ -798,7 +818,7 @@ static int vvsfs_empty_dir(struct inode *dir) {
         if (IS_ERR(page)) {
             DEBUG_LOG("vvsfs - empty_dir - error getting page: %d\n",
                       (int)((uintptr_t)page));
-            tinue;
+            continue;
         }
         vvsfs_init_entries_iter(page, dir, n, &kaddr, &limit);
         for_entries(p, kaddr, limit) {
