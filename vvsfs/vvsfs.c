@@ -686,7 +686,7 @@ static struct vvsfs_dir_entry *vvsfs_find_entry(struct dentry *dentry,
             DEBUG_LOG("vvsfs - find_entry - page is null for %zu @ %zu: %d\n",
                       dir->i_ino,
                       n,
-                      PTR_TO_ERR(page));
+                      PTR_ERR(page));
             continue;
         }
         vvsfs_init_entries_iter(page, dir, n, &kaddr, &limit);
