@@ -29,7 +29,7 @@
 
 #if DEBUG
 #define DEBUG_LOG(msg, ...)                                                    \
-    printk("%s(%s:%d) :: " #msg, __func__, __FILE__, __LINE__, __VA_ARGS__)
+    printk("%s(%s:%d) :: " #msg, __func__, __FILE__, __LINE__, ##__VA_ARGS__)
 #else
 #define DEBUG_LOG(msg, ...) ({})
 #endif
@@ -724,9 +724,19 @@ static int vvsfs_delete_entry(struct vvsfs_dir_entry *de, struct page *page) {
     char *kaddr = page_address(page);
     loff_t pos = page_offset(page) + (char *)de - kaddr;
     unsigned len = sizeof(struct vvsfs_dir_entry);
-    lock_page(page);
 	struct page* page_ref[1] = { page };
-	err = vvsfs_write_begin(NULL, mapping, pos, len, (struct page**) page_ref, NULL);
+    lock_page(page);
+	err = vvsfs_write_begin(
+			NULL,
+			mapping,
+			pos,
+			len,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
+			0,
+#endif
+			(struct page**) page_ref,
+			NULL
+	);
     if (err == 0) {
         de->inode_number = 0;
         err = dir_commit_chunk(page, pos, len);
