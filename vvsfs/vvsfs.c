@@ -542,6 +542,56 @@ vvsfs_create(struct mnt_idmap *namespace,
     return 0;
 }
 
+// The "link" operation.
+// Takes an existing inode and new directory and entry
+// It then copies points the new entry to the old inode and increases the link
+// count
+static int vvsfs_link(struct dentry *old_dentry,
+                      struct inode *dir,
+                      struct dentry *dentry) {
+    struct vvsfs_inode_info *dir_info;
+    int ret;
+    struct inode *inode;
+
+    if (DEBUG)
+        printk("vvsfs - link : %s\n", dentry->d_name.name);
+
+    if (dentry->d_name.len > VVSFS_MAXNAME) {
+        printk("vvsfs - link - file name too long");
+        return -ENAMETOOLONG;
+    }
+
+    dir_info = VVSFS_I(dir);
+    if (!dir_info) {
+        printk("vvsfs - link - vi_dir null!");
+        return -EINVAL;
+    }
+
+    inode = d_inode(old_dentry);
+
+    // minix and ext2 update the ctime so I think its correct
+    inode->i_ctime = current_time(inode);
+
+    // increase inode ref counts
+    inode_inc_link_count(inode);
+    ihold(inode);
+
+    // add the file/directory to the parent directory's list
+    // of entries -- on disk.
+    ret = vvsfs_add_new_entry(dir, dentry, inode);
+    if (ret != 0) {
+        // error so decrease the ref counts
+        inode_dec_link_count(inode);
+        iput(inode);
+        return ret;
+    }
+
+    d_instantiate(dentry, inode);
+
+    printk("Link created %ld\n", inode->i_ino);
+    return 0;
+}
+
 // The `mkdir` operation for directory. It simply calls vvsfs_create, with the
 // added flag of S_IFDIR (signifying this is a directory).
 static int
@@ -585,6 +635,7 @@ static struct inode_operations vvsfs_dir_inode_operations = {
     .create = vvsfs_create,
     .lookup = vvsfs_lookup,
     .mkdir = vvsfs_mkdir,
+    .link = vvsfs_link,
 };
 
 // This implements the super operation for writing a 'dirty' inode to disk
