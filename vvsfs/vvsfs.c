@@ -786,6 +786,7 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir, struct bufloc_t *loc) {
     int d_index;
     int d;
     int last_block_dentry_count;
+    DEBUG_LOG("vvsfs - delete_entry_bufloc\n");
     vi = VVSFS_I(dir);
     b_index = loc->b_index;
     d_index = loc->d_index;
@@ -808,9 +809,14 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir, struct bufloc_t *loc) {
     if (b_index == vi->i_db_count - 1) {
         if (d == last_block_dentry_count - 1) {
             // Last dentry in block remove cleanly
+            DEBUG_LOG("vvsfs - delete_entry_bufloc - last block, last dentry "
+                      "in block, zero the entry\n");
             memset(dentry, 0, last_block_dentry_count);
+            // TODO: Deallocate block
         } else {
             // Move last dentry in block to hole
+            DEBUG_LOG("vvsfs - delete_entry_bufloc - last block, not last "
+                      "dentry in block, move last entry to hole\n");
             last_dentry = READ_DENTRY(bh, last_block_dentry_count - 1);
             memcpy(dentry, last_dentry, VVSFS_DENTRYSIZE);
             // Delete the last dentry (as it has been moved)
@@ -818,6 +824,8 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir, struct bufloc_t *loc) {
         }
     } else {
         // Fill the hole with the last dentry in the last block
+        DEBUG_LOG("vvsfs - delete_entry_bufloc - not last block, fill hole "
+                  "from last block\n");
         bh_end = READ_BLOCK(dir->i_sb, vi, vi->i_db_count - 1);
         last_dentry = READ_DENTRY(bh_end, last_block_dentry_count - 1);
         memcpy(dentry, last_dentry, VVSFS_DENTRYSIZE);
@@ -826,12 +834,13 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir, struct bufloc_t *loc) {
         mark_buffer_dirty(bh_end);
         sync_dirty_buffer(bh_end);
         brelse(bh_end);
+		// TODO: Deallocate last block if moved dentry was only one in block
     }
     dir->i_size -= VVSFS_DENTRYSIZE;
-
     mark_buffer_dirty(bh);
     sync_dirty_buffer(bh);
     brelse(bh);
+    DEBUG_LOG("vvsfs - delete_entry_bufloc - done\n");
     return 0;
 }
 
@@ -858,8 +867,9 @@ static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
         return err;
     }
     inode->i_ctime = dir->i_ctime;
-    DEBUG_LOG("vvsfs - unlink - inode link count: %u\n", inode->i_nlink);
+    DEBUG_LOG("vvsfs - unlink - inode link count before: %u\n", inode->i_nlink);
     inode_dec_link_count(inode);
+    DEBUG_LOG("vvsfs - unlink - inode link count after: %u\n", inode->i_nlink);
     return err;
 }
 
@@ -900,7 +910,7 @@ static int vvsfs_dir_only_reserved(struct buffer_head *bh,
             // If the dentry is not '.' or '..' (given that the second case
             // matches the inode to the parent), then this is not empty
             DEBUG_LOG("vvsfs - dir_only_reserved - non-reserved entry: name: "
-                      "%d inumber: %u\n",
+                      "%s inumber: %u\n",
                       name,
                       inumber);
             return 0;
@@ -937,7 +947,7 @@ static int vvsfs_empty_dir(struct inode *dir) {
         if (!bh) {
             // Buffer read failed, no more data when we expected some
             DEBUG_LOG("vvsfs - empty_dir - buffer read failed\n");
-			return -EIO;
+            return -EIO;
         }
         current_block_dentry_count = i == vi->i_db_count - 1
                                          ? last_block_dentry_count
@@ -972,8 +982,12 @@ static int vvsfs_rmdir(struct inode *dir, struct dentry *dentry) {
         return err;
     }
     inode->i_size = 0;
-    DEBUG_LOG("vvsfs - rmdir - inode link count: %u\n", inode->i_nlink);
-    inode_dec_link_count(inode); // Remove '.' link
+    DEBUG_LOG("vvsfs - rmdir - dir link count before: %u\n", dir->i_nlink);
+    inode_dec_link_count(dir); // Remove '.' link
+    DEBUG_LOG("vvsfs - rmdir - dir link count after: %u\n", dir->i_nlink);
+    DEBUG_LOG("vvsfs - rmdir - inode link count before: %u\n", inode->i_nlink);
+    inode_dec_link_count(inode); // Remove '..' link
+    DEBUG_LOG("vvsfs - rmdir - inode link count after: %u\n", inode->i_nlink);
     DEBUG_LOG("Removed directory %ld\n", inode->i_ino);
     return err;
 }
