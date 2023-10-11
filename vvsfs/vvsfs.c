@@ -34,6 +34,11 @@
 #define DEBUG_LOG(msg, ...) ({})
 #endif
 
+#define READ_BLOCK(vi, index)                                                  \
+    sb_bread((vi)->i_sb, vvsfs_get_data_block((vi)->i_data[(index)]))
+#define READ_DENTRY(bh, offset)                                                \
+    ((struct vvsfs_dir_entry *)((bh)->b_data + (offset)*VVSFS_DENTRYSIZE))
+
 // Avoid using char* as a byte array since some systems may have a 16 bit char
 // type this ensures that any system that has 8 bits = 1 byte will be valid for
 // byte array usage irrespective of char sizing.
@@ -224,7 +229,7 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
         printk("vvsfs - read_entries - reading dno: %d, disk block: %d",
                vi->i_data[i],
                vvsfs_get_data_block(vi->i_data[i]));
-        bh = sb_bread(sb, vvsfs_get_data_block(vi->i_data[i]));
+        bh = READ_BLOCK(vi, i);
         if (!bh) {
             // Buffer read failed, no more data when we expected some
             kfree(data);
@@ -466,7 +471,7 @@ static int vvsfs_add_new_entry(struct inode *dir,
     bh = sb_bread(sb, vvsfs_get_data_block(dno));
     if (!bh)
         return -ENOMEM;
-    dent = (struct vvsfs_dir_entry *)(bh->b_data + d_off * VVSFS_DENTRYSIZE);
+    dent = READ_DENTRY(bh, d_off);
     strncpy(dent->name, dentry->d_name.name, dentry->d_name.len);
     dent->name[dentry->d_name.len] = '\0';
     dent->inode_number = inode->i_ino;
@@ -616,7 +621,7 @@ typedef struct bufloc_t {
     unsigned flags;                 // Flags used to construct instance
     struct buffer_head *bh;         // Data block
     struct vvsfs_dir_entry *dentry; // Matched entry
-};
+} __attribute__((packed));
 
 #define BL_PERSIST_BUFFER (1 << 1)
 // Dependent on BL_PERSIST_BUFFER
@@ -661,17 +666,11 @@ static int vvsfs_find_entry_in_block(struct buffer_head *bh,
     return 0;
 }
 
-#define READ_BLOCK(vi, index)                                                  \
-    sb_bread((vi)->i_sb, vvsfs_get_data_block((vi)->i_data[(index)]))
-#define READ_DENTRY(bh, offset)                                                \
-    ((struct vvsfs_dir_entry *)((bh)->b_data + (offset)*VVSFS_DENTRYSIZE))
-
 static int vvsfs_find_entry(struct inode *dir,
                             struct dentry *dentry,
                             unsigned flags,
                             struct bufloc_t *out_loc) {
     struct vvsfs_inode_info *vi;
-    struct super_block *sb;
     struct vvsfs_dir_entry *c_dentry;
     int i, d;
     int num_dirs;
@@ -690,8 +689,6 @@ static int vvsfs_find_entry(struct inode *dir,
     last_block_dentry_count = last_block_dentry_count == 0
                                   ? VVSFS_N_DENTRY_PER_BLOCK
                                   : last_block_dentry_count;
-    // Retrieve superblock object for R/W to disk blocks
-    sb = dir->i_sb;
     DEBUG_LOG("vvsfs - find_entry - number of blocks to read %d\n",
               vi->i_db_count);
     // Progressively load datablocks into memory and check dentries
