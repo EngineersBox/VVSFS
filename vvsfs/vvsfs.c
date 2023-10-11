@@ -615,6 +615,9 @@ namecmp(const char *name, const char *target_name, int target_name_len) {
            strncmp(name, target_name, target_name_len);
 }
 
+/* Representation of a location of a dentry within
+ * the data blocks.
+ */
 typedef struct bufloc_t {
     int b_index;                    // Data block index
     int d_index;                    // Dentry index within data block
@@ -623,11 +626,25 @@ typedef struct bufloc_t {
     struct vvsfs_dir_entry *dentry; // Matched entry
 } __attribute__((packed));
 
+/* Persist the struct buffer_head object in bufloc_t without releasing it */
 #define BL_PERSIST_BUFFER (1 << 1)
-// Dependent on BL_PERSIST_BUFFER
+/* Persist (not clone) the struct vvsfs_dir_entry object in bufloc_t, dependent on BL_PERSIST_BUFFER */
 #define BL_PERSIST_DENTRY (1 << 2)
+/* Determine if a given flag is set */
 #define bl_flag_set(flags, flag) ((flags) & (flag))
 
+/* Find a dentry within a given block by name (returned through parameter)
+ *
+ * @bh: Data block buffer
+ * @dentry_count: Number of dentries in this block
+ * @i: Data block index
+ * @target_name: Name of the dentry to be found
+ * @target_name_len: Length of target name
+ * @flags: Behaviour flags for bufloc_t construction
+ * @out_loc: Returned data for any potentially found matching dentry
+ *
+ * @return: (int) 1 if found, 0 otherwise
+ */
 static int vvsfs_find_entry_in_block(struct buffer_head *bh,
                                      int dentry_count,
                                      int i,
@@ -666,17 +683,37 @@ static int vvsfs_find_entry_in_block(struct buffer_head *bh,
     return 0;
 }
 
+/* Calculate the number of dentries in the last data block
+ *
+ * @dir: Directory inode object
+ * @count: Variable used to store count in
+ *
+ * @return: (int) count of dentries
+ */
+#define LAST_BLOCK_DENTRY_COUNT(dir, count) \
+	(count) = ((dir)->i_size / VVSFS_DENTRYSIZE) % VVSFS_N_DENTRY_PER_BLOCK; \
+	(count) == 0 ? VVSFS_N_DENTRY_PER_BLOCK : (count)
+
+/* Find a given entry within the given directory inode
+ *
+ * @dir: Inode representation of directory to search
+ * @dentry: Target dentry (name, length, etc)
+ * @flags: Behavioural flags for bufloc_t data
+ * @out_loc: Returned data for location of entry if found
+ *
+ * @return: (int): 1 if found, 0 if not found, otherwise and error
+ */
 static int vvsfs_find_entry(struct inode *dir,
                             struct dentry *dentry,
                             unsigned flags,
                             struct bufloc_t *out_loc) {
     struct vvsfs_inode_info *vi;
     struct vvsfs_dir_entry *c_dentry;
-    int i, d;
-    int num_dirs;
+	struct buffer_head *bh;
+    int i;
+	int d;
     int last_block_dentry_count;
     int current_block_dentry_count;
-    struct buffer_head *bh;
     char *name;
     uint32_t inumber;
     DEBUG_LOG("vvsfs - find_entry\n");
@@ -684,11 +721,7 @@ static int vvsfs_find_entry(struct inode *dir,
     int target_name_len = dentry->d_name.len;
     // Retrieve vvsfs specific inode data from dir inode
     vi = VVSFS_I(dir);
-    num_dirs = dir->i_size / VVSFS_DENTRYSIZE;
-    last_block_dentry_count = num_dirs % VVSFS_N_DENTRY_PER_BLOCK;
-    last_block_dentry_count = last_block_dentry_count == 0
-                                  ? VVSFS_N_DENTRY_PER_BLOCK
-                                  : last_block_dentry_count;
+	last_block_dentry_count = LAST_BLOCK_DENTRY_COUNT(dir, last_block_dentry_count);
     DEBUG_LOG("vvsfs - find_entry - number of blocks to read %d\n",
               vi->i_db_count);
     // Progressively load datablocks into memory and check dentries
@@ -719,6 +752,14 @@ static int vvsfs_find_entry(struct inode *dir,
     return 0;
 }
 
+/* Delete and entry in a directory based on data obtained through
+ * invocation of `vvsfs_find_entry(...)`
+ *
+ * @dir: Inode representation of directory to search
+ * @loc: Location of entry in data blocks
+ *
+ * @return: (int) 0 if successful, error otherwise
+ */
 static int vvsfs_delete_entry_bufloc(struct inode *dir, struct bufloc_t *loc) {
     struct vvsfs_inode_info *vi;
     struct buffer_head *bh;
@@ -747,13 +788,9 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir, struct bufloc_t *loc) {
     } else {
         dentry = READ_DENTRY(bh, d_index);
     }
+	last_block_dentry_count = LAST_BLOCK_DENTRY_COUNT(dir, last_block_dentry_count);
     // Determine if we are in the last block
     if (b_index == vi->i_db_count - 1) {
-        num_dirs = dir->i_size / VVSFS_DENTRYSIZE;
-        last_block_dentry_count = num_dirs % VVSFS_N_DENTRY_PER_BLOCK;
-        last_block_dentry_count = last_block_dentry_count == 0
-                                      ? VVSFS_N_DENTRY_PER_BLOCK
-                                      : last_block_dentry_count;
         if (d == last_block_dentry_count - 1) {
             // Last dentry in block remove cleanly
             memset(dentry, 0, last_block_dentry_count);
@@ -783,6 +820,13 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir, struct bufloc_t *loc) {
     return 0;
 }
 
+/* Unlink a dentry from a given directory inode
+ *
+ * @dir: Directory to remove from
+ * @dentry: Target to remove
+ *
+ * @return: (int) 0 if successfull, error otherwise
+ */
 static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
     int err = -ENOENT;
     struct inode *inode = d_inode(dentry);
@@ -804,6 +848,15 @@ static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
     return err;
 }
 
+/* Determine if a given name and inode represent a non-reserved
+ * dentry (e.g. not '.' or '..')
+ *
+ * @name: Name of the dentry
+ * @inumber: Inode number of the dentry
+ * @inode: Parent directory inode
+ *
+ * @return: (int) 1 if not reserved, 0 otherwise
+ */
 #define IS_NON_RESERVED_DENTRY(name, inumber, inode)                           \
     (inumber) != 0 &&                                                          \
         ((name)[0] != '.' || (!(name)[1] && (inumber) != (inode)->i_ino) ||    \
@@ -816,7 +869,9 @@ static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
  *
  * @return (int): 0 if there is a non-reserved entry in any dentry, 1 otherwise
  */
-static int vvsfs_dir_only_reserved(struct buffer_head *bh, int dentry_count) {
+static int vvsfs_dir_only_reserved(struct buffer_head *bh,
+                                   struct inode *dir,
+                                   int dentry_count) {
     struct vvsfs_dir_entry *dentry;
     char *name;
     uint32_t inumber;
@@ -835,6 +890,12 @@ static int vvsfs_dir_only_reserved(struct buffer_head *bh, int dentry_count) {
     return 1;
 }
 
+/* Determine if a given directory is empty (has only reserved entries)
+ *
+ * @dir: Target directory inode
+ *
+ * @return: (int) 1 if true, 0 otherwise
+ */
 static int vvsfs_empty_dir(struct inode *dir) {
     struct vvsfs_inode_info *vi;
     struct vvsfs_dir_entry *dentry;
@@ -848,11 +909,7 @@ static int vvsfs_empty_dir(struct inode *dir) {
     DEBUG_LOG("vvsfs - empty_dir\n");
     // Retrieve vvsfs specific inode data from dir inode
     vi = VVSFS_I(dir);
-    num_dirs = dir->i_size / VVSFS_DENTRYSIZE;
-    last_block_dentry_count = num_dirs % VVSFS_N_DENTRY_PER_BLOCK;
-    last_block_dentry_count = last_block_dentry_count == 0
-                                  ? VVSFS_N_DENTRY_PER_BLOCK
-                                  : last_block_dentry_count;
+	last_block_dentry_count = LAST_BLOCK_DENTRY_COUNT(dir, last_block_dentry_count);
     // Retrieve superblock object for R/W to disk blocks
     DEBUG_LOG("vvsfs - empty_dir - number of blocks to read %d\n",
               vi->i_db_count);
@@ -870,7 +927,7 @@ static int vvsfs_empty_dir(struct inode *dir) {
                                          ? last_block_dentry_count
                                          : VVSFS_N_DENTRY_PER_BLOCK;
         // Check if there are any non-reserved dentries
-        if (!vvsfs_dir_only_reserved(bh, current_block_dentry_count)) {
+        if (!vvsfs_dir_only_reserved(bh, dir, current_block_dentry_count)) {
             brelse(bh);
             return 0;
         }
@@ -880,6 +937,13 @@ static int vvsfs_empty_dir(struct inode *dir) {
     return 1;
 }
 
+/* Remove a given entry from a given directory
+ *
+ * @dir: Inode representation of directory to remove from
+ * @dentry: Target entry to remove
+ *
+ * @return: (int) 0 if successful, error otherwise
+ */
 static int vvsfs_rmdir(struct inode *dir, struct dentry *dentry) {
     struct inode *inode = d_inode(dentry);
     int err = -ENOTEMPTY;
