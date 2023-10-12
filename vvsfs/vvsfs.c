@@ -26,10 +26,22 @@
 #include "vvsfs.h"
 
 #define DEBUG 1
+#define LOG_FILE_PATH 0
 
-#if DEBUG
+#if defined(LOG_FILE_PATH) && LOG_FILE_PATH == 1
+#define FILE_FORMAT_PARAMETER "%s"
+#define FILE_MARKER __FILE__
+#else
+#define FILE_FORMAT_PARAMETER ""
+#define FILE_MARKER
+#endif
+
+#if defined(DEBUG) && DEBUG == 1
 #define DEBUG_LOG(msg, ...)                                                    \
-    printk("%s(%s:%d) :: " msg, __func__, __FILE__, __LINE__, ##__VA_ARGS__)
+    printk("%s(" FILE_FORMAT_PARAMETER ":%d) :: " msg,                         \
+           __func__,                                                           \
+           FILE_MARKER __LINE__,                                               \
+           ##__VA_ARGS__)
 #else
 #define DEBUG_LOG(msg, ...) ({})
 #endif
@@ -625,7 +637,7 @@ typedef struct __attribute__((packed)) bufloc_t {
     unsigned flags;                 // Flags used to construct instance
     struct buffer_head *bh;         // Data block
     struct vvsfs_dir_entry *dentry; // Matched entry
-};
+} bufloc_t;
 
 /* Persist the struct buffer_head object in bufloc_t without releasing it */
 #define BL_PERSIST_BUFFER (1 << 1)
@@ -670,7 +682,7 @@ static int vvsfs_find_entry_in_block(struct buffer_head *bh,
             inumber);
         // Skip if reserved or name does not match
         DEBUG_LOG(
-            "vvsfs - find_entry_in_block - comparing %s (%d) == %s (%d)\n",
+            "vvsfs - find_entry_in_block - comparing %s (%zu) == %s (%d)\n",
             name,
             strlen(name),
             target_name,
@@ -770,28 +782,32 @@ static int vvsfs_find_entry(struct inode *dir,
 
 static int vvsfs_dealloc_data_block(struct inode *inode, int block_index) {
     struct vvsfs_inode_info *vi;
-	struct super_block *sb;
-	struct vvsfs_sb_info *sb_info;
-	DEBUG_LOG("vvsfs - dealloc_data_block\n");
-	if (block_index < 0 || block_index >= VVSFS_N_BLOCKS) {
-		DEBUG_LOG("vvsfs - dealloc_data_block - block_index (%d) out of range %d-%d\n", block_index, 0, VVSFS_N_BLOCKS - 1);
-		return -EINVAL;
-	}
+    struct super_block *sb;
+    struct vvsfs_sb_info *sb_info;
+    size_t count;
+    DEBUG_LOG("vvsfs - dealloc_data_block\n");
+    if (block_index < 0 || block_index >= VVSFS_N_BLOCKS) {
+        DEBUG_LOG("vvsfs - dealloc_data_block - block_index (%d) out of range "
+                  "%d-%d\n",
+                  block_index,
+                  0,
+                  VVSFS_N_BLOCKS - 1);
+        return -EINVAL;
+    }
     vi = VVSFS_I(inode);
-	sb = inode->i_sb;
-	sb_info = sb->s_fs_info;
-	DEBUG_LOG("vvsfs - dealloc_data_block - removing block %d\n", block_index);
-	vvsfs_free_data_block(sb_info->dmap, vi->i_data[block_index]);
-	// Move all subsequent blocks back to fill the holes
-	DEBUG_LOG("db_count: %d, index: %d\n", vi->i_db_count, block_index);
-	size_t count = (--vi->i_db_count) - block_index;
-	DEBUG_LOG("count: %d\n", count);
-	memmove(&vi->i_data[block_index], &vi->i_data[block_index + 1], count);
-	// Ensure the last block is not set (avoids duplication of last element from shift back)
-	vi->i_data[VVSFS_N_BLOCKS - 1] = 0;
-	mark_inode_dirty(inode);
-	DEBUG_LOG("vvsfs - dealloc_data_block - done\n");
-	return 0;
+    sb = inode->i_sb;
+    sb_info = sb->s_fs_info;
+    DEBUG_LOG("vvsfs - dealloc_data_block - removing block %d\n", block_index);
+    vvsfs_free_data_block(sb_info->dmap, vi->i_data[block_index]);
+    // Move all subsequent blocks back to fill the holes
+    count = (--vi->i_db_count) - block_index;
+    memmove(&vi->i_data[block_index], &vi->i_data[block_index + 1], count);
+    // Ensure the last block is not set (avoids duplication of last element from
+    // shift back)
+    vi->i_data[VVSFS_N_BLOCKS - 1] = 0;
+    mark_inode_dirty(inode);
+    DEBUG_LOG("vvsfs - dealloc_data_block - done\n");
+    return 0;
 }
 
 /* Delete and entry in a directory based on data obtained through
@@ -812,7 +828,7 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir, struct bufloc_t *loc) {
     int d_index;
     int d;
     int last_block_dentry_count;
-	int err;
+    int err;
     DEBUG_LOG("vvsfs - delete_entry_bufloc\n");
     vi = VVSFS_I(dir);
     b_index = loc->b_index;
@@ -840,9 +856,9 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir, struct bufloc_t *loc) {
                       "in block, zero the entry\n");
             memset(dentry, 0, last_block_dentry_count);
             // TODO: Deallocate block
-			if ((err = vvsfs_dealloc_data_block(dir, b_index))) {
-				return err;
-			}
+            if ((err = vvsfs_dealloc_data_block(dir, b_index))) {
+                return err;
+            }
         } else {
             // Move last dentry in block to hole
             DEBUG_LOG("vvsfs - delete_entry_bufloc - last block, not last "
@@ -860,9 +876,10 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir, struct bufloc_t *loc) {
         last_dentry = READ_DENTRY(bh_end, last_block_dentry_count - 1);
         memcpy(dentry, last_dentry, VVSFS_DENTRYSIZE);
         memset(last_dentry, 0, VVSFS_DENTRYSIZE);
-		if (last_block_dentry_count == 1 && (err = vvsfs_dealloc_data_block(dir, b_index))) {
-			return err;
-		}
+        if (last_block_dentry_count == 1 &&
+            (err = vvsfs_dealloc_data_block(dir, b_index))) {
+            return err;
+        }
         // Persist the changes to the end block
         mark_buffer_dirty(bh_end);
         sync_dirty_buffer(bh_end);
@@ -870,11 +887,11 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir, struct bufloc_t *loc) {
         // TODO: Deallocate last block if moved dentry was only one in block
     }
     dir->i_size -= VVSFS_DENTRYSIZE;
-	dir->i_ctime = dir->i_mtime = current_time(dir);
+    dir->i_ctime = dir->i_mtime = current_time(dir);
     mark_buffer_dirty(bh);
     sync_dirty_buffer(bh);
     brelse(bh);
-	mark_inode_dirty(dir);
+    mark_inode_dirty(dir);
     DEBUG_LOG("vvsfs - delete_entry_bufloc - done\n");
     return 0;
 }
@@ -902,10 +919,9 @@ static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
         return err;
     }
     inode->i_ctime = dir->i_ctime;
-    DEBUG_LOG("vvsfs - unlink - inode link count before: %u\n", inode->i_nlink);
     inode_dec_link_count(inode);
-    DEBUG_LOG("vvsfs - unlink - inode link count after: %u\n", inode->i_nlink);
-	mark_inode_dirty(inode);
+	// BUG: Should also have inode_dec_link_count(dir) but not enough links present. Bug somewhere
+    mark_inode_dirty(inode);
     return err;
 }
 
@@ -1020,8 +1036,8 @@ static int vvsfs_rmdir(struct inode *dir, struct dentry *dentry) {
     inode->i_size = 0;
     inode_dec_link_count(dir); // Remove '..' link
     DEBUG_LOG("vvsfs - rmdir - done\n");
-	mark_inode_dirty(dir);
-	mark_inode_dirty(inode);
+    mark_inode_dirty(dir);
+    mark_inode_dirty(inode);
     return err;
 }
 
