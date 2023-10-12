@@ -768,6 +768,35 @@ static int vvsfs_find_entry(struct inode *dir,
     return 1;
 }
 
+static int vvsfs_dealloc_data_block(struct inode *inode, int block_index) {
+    struct vvsfs_inode_info *vi;
+	struct super_block *sb;
+	struct vvsfs_sb_info *sb_info;
+	DEBUG_LOG("vvsfs - dealloc_data_block\n");
+	int err = -EINVAL;
+	if (block_index < 0 || block_index >= VVSFS_N_BLOCKS) {
+		DEBUG_LOG("vvsfs - dealloc_data_block - block_index (%d) out of range %d-%d\n", block_index, 0, VVSFS_N_BLOCKS - 1);
+		return err;
+	}
+    vi = VVSFS_I(inode);
+	sb = inode->i_sb;
+	sb_info = sb->s_fs_info;
+	if (!vi->i_data[block_index]) {
+		// Data block is not set (zero value)
+		return err;
+	}
+	DEBUG_LOG("vvsfs - dealloc_data_block - removing block %d\n", block_index);
+	vvsfs_free_data_block(sb_info->dmap, vi->i_data[block_index]);
+	// Move all subsequent blocks back to fill the holes
+	memmove(&vi->i_data[block_index], &vi->i_data[block_index + 1], VVSFS_N_BLOCKS - 1 - block_index);
+	// Ensure the last block is not set (avoids duplication of last element from shift back)
+	vi->i_data[VVSFS_N_BLOCKS - 1] = 0;
+	mark_inode_dirty(inode);
+	iput(inode);
+	DEBUG_LOG("vvsfs - dealloc_data_block - done\n");
+	return 0;
+}
+
 /* Delete and entry in a directory based on data obtained through
  * invocation of `vvsfs_find_entry(...)`
  *
@@ -786,6 +815,7 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir, struct bufloc_t *loc) {
     int d_index;
     int d;
     int last_block_dentry_count;
+	int err;
     DEBUG_LOG("vvsfs - delete_entry_bufloc\n");
     vi = VVSFS_I(dir);
     b_index = loc->b_index;
@@ -813,6 +843,9 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir, struct bufloc_t *loc) {
                       "in block, zero the entry\n");
             memset(dentry, 0, last_block_dentry_count);
             // TODO: Deallocate block
+			if ((err = vvsfs_dealloc_data_block(dir, b_index))) {
+				return err;
+			}
         } else {
             // Move last dentry in block to hole
             DEBUG_LOG("vvsfs - delete_entry_bufloc - last block, not last "
@@ -830,11 +863,14 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir, struct bufloc_t *loc) {
         last_dentry = READ_DENTRY(bh_end, last_block_dentry_count - 1);
         memcpy(dentry, last_dentry, VVSFS_DENTRYSIZE);
         memset(last_dentry, 0, VVSFS_DENTRYSIZE);
+		if (last_block_dentry_count == 1 && (err = vvsfs_dealloc_data_block(dir, b_index))) {
+			return err;
+		}
         // Persist the changes to the end block
         mark_buffer_dirty(bh_end);
         sync_dirty_buffer(bh_end);
         brelse(bh_end);
-		// TODO: Deallocate last block if moved dentry was only one in block
+        // TODO: Deallocate last block if moved dentry was only one in block
     }
     dir->i_size -= VVSFS_DENTRYSIZE;
     mark_buffer_dirty(bh);
