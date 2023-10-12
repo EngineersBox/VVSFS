@@ -920,7 +920,6 @@ static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
     }
     inode->i_ctime = dir->i_ctime;
     inode_dec_link_count(inode);
-	// BUG: Should also have inode_dec_link_count(dir) but not enough links present. Bug somewhere
     mark_inode_dirty(inode);
     return err;
 }
@@ -1035,6 +1034,7 @@ static int vvsfs_rmdir(struct inode *dir, struct dentry *dentry) {
     }
     inode->i_size = 0;
     inode_dec_link_count(dir); // Remove '..' link
+	// BUG: Should also have inode_dec_link_count(dir) for '.' but not enough links present. Bug somewhere
     DEBUG_LOG("vvsfs - rmdir - done\n");
     mark_inode_dirty(dir);
     mark_inode_dirty(inode);
