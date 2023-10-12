@@ -788,7 +788,8 @@ static int vvsfs_dealloc_data_block(struct inode *inode, int block_index) {
 	DEBUG_LOG("vvsfs - dealloc_data_block - removing block %d\n", block_index);
 	vvsfs_free_data_block(sb_info->dmap, vi->i_data[block_index]);
 	// Move all subsequent blocks back to fill the holes
-	memmove(&vi->i_data[block_index], &vi->i_data[block_index + 1], VVSFS_N_BLOCKS - 1 - block_index);
+	size_t count = (--vi->i_db_count) - block_index;
+	memmove(&vi->i_data[block_index], &vi->i_data[block_index + 1], count);
 	// Ensure the last block is not set (avoids duplication of last element from shift back)
 	vi->i_data[VVSFS_N_BLOCKS - 1] = 0;
 	mark_inode_dirty(inode);
