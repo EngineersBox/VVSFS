@@ -660,6 +660,11 @@ typedef struct __attribute__((packed)) bufloc_t {
  * if they have not already been. This behaviour is conditional
  * on the flags set.
  *
+ * Note that the user is expected to release the buffer_head (bh field)
+ * with brelse(bufloc->bh) when this bufloc_t instance is not longer needed.
+ * Since the dentry field is constructed from the memory held in the
+ * buffer_head data, it is no necessery to release the dentry field.
+ *
  * @dir: Target directory inode
  * @vi: Inode information for target directory inode
  * @bufloc: Specification of dentry location (does not assume already resolved)
