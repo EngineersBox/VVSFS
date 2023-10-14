@@ -634,7 +634,7 @@ vvsfs_mkdir(struct mnt_idmap *namespace,
  *
  * @return (int) 1 if names match, 0 otherwise
  */
-__attribute__((always_inline)) static inline int
+__attribute__((always_inline)) static inline bool
 namecmp(const char *name, const char *target_name, int target_name_len) {
     return strlen(name) == target_name_len &&
            strncmp(name, target_name, target_name_len) == 0;
