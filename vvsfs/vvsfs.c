@@ -232,13 +232,13 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
     sb = dir->i_sb;
     DEBUG_LOG("vvsfs - read_dentries - number of dentries to read %d - %d\n",
               *num_dirs,
-			  vi->i_db_count);
+              vi->i_db_count);
     // Read all dentries into mem
     data = kzalloc(vi->i_db_count * VVSFS_BLOCKSIZE, GFP_KERNEL);
     if (!data) {
         return ERR_PTR(-ENOMEM);
-	}
-	DEBUG_LOG("vvsfs - read_dentries - iter\n");
+    }
+    DEBUG_LOG("vvsfs - read_dentries - iter\n");
     for (i = 0; i < vi->i_db_count; ++i) {
         printk("vvsfs - read_entries - reading dno: %d, disk block: %d",
                vi->i_data[i],
@@ -854,9 +854,11 @@ static int vvsfs_dealloc_data_block(struct inode *inode, int block_index) {
     DEBUG_LOG("vvsfs - dealloc_data_block - removing block %d\n", block_index);
     vvsfs_free_data_block(sb_info->dmap, vi->i_data[block_index]);
     // Move all subsequent blocks back to fill the holes
-	DEBUG_LOG("vvsfs - dealloc_data_block - i_db_count before: %d\n", vi->i_db_count);
+    DEBUG_LOG("vvsfs - dealloc_data_block - i_db_count before: %d\n",
+              vi->i_db_count);
     count = (--vi->i_db_count) - block_index;
-	DEBUG_LOG("vvsfs - dealloc_data_block - i_db_count after: %d\n", vi->i_db_count);
+    DEBUG_LOG("vvsfs - dealloc_data_block - i_db_count after: %d\n",
+              vi->i_db_count);
     memmove(&vi->i_data[block_index], &vi->i_data[block_index + 1], count);
     // Ensure the last block is not set (avoids duplication of last element from
     // shift back)
@@ -879,14 +881,15 @@ static int vvsfs_delete_entry_last_block(struct inode *dir,
     struct vvsfs_dir_entry *last_dentry;
     int last_block_dentry_count;
     int err;
-	DEBUG_LOG("vvsfs - delete_entry_last_block\n");
+    DEBUG_LOG("vvsfs - delete_entry_last_block\n");
     LAST_BLOCK_DENTRY_COUNT(dir, last_block_dentry_count);
     if (bufloc->d_index == last_block_dentry_count - 1) {
         // Last dentry in block remove cleanly
         DEBUG_LOG("vvsfs - delete_entry_bufloc - last block, last dentry "
                   "in block, zero the entry\n");
         memset(bufloc->dentry, 0, last_block_dentry_count);
-        if (last_block_dentry_count == 1 && (err = vvsfs_dealloc_data_block(dir, bufloc->b_index))) {
+        if (last_block_dentry_count == 1 &&
+            (err = vvsfs_dealloc_data_block(dir, bufloc->b_index))) {
             return err;
         }
     } else {
@@ -898,7 +901,7 @@ static int vvsfs_delete_entry_last_block(struct inode *dir,
         // Delete the last dentry (as it has been moved)
         memset(last_dentry, 0, VVSFS_DENTRYSIZE);
     }
-	DEBUG_LOG("vvsfs - delete_entry_last_block - done\n");
+    DEBUG_LOG("vvsfs - delete_entry_last_block - done\n");
     return 0;
 }
 
@@ -917,7 +920,7 @@ static int vvsfs_delete_entry_block(struct inode *dir,
     struct buffer_head *bh_end;
     int err;
     int last_block_dentry_count;
-	DEBUG_LOG("vvsfs - delete_entry_block\n");
+    DEBUG_LOG("vvsfs - delete_entry_block\n");
     LAST_BLOCK_DENTRY_COUNT(dir, last_block_dentry_count);
     // Fill the hole with the last dentry in the last block
     DEBUG_LOG("vvsfs - delete_entry_bufloc - not last block, fill hole "
@@ -934,7 +937,7 @@ static int vvsfs_delete_entry_block(struct inode *dir,
     mark_buffer_dirty(bh_end);
     sync_dirty_buffer(bh_end);
     brelse(bh_end);
-	DEBUG_LOG("vvsfs - delete_entry_block - done \n");
+    DEBUG_LOG("vvsfs - delete_entry_block - done \n");
     return 0;
 }
 
@@ -955,18 +958,20 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir,
     // Resolve the buffer head and dentry if not already done (indiciated by
     // flags)
     if ((err = vvsfs_resolve_bufloc(dir, vi, bufloc))) {
-		DEBUG_LOG("vvsfs - delete_entry_bufloc - failed to resolve bufloc\n");
+        DEBUG_LOG("vvsfs - delete_entry_bufloc - failed to resolve bufloc\n");
         return err;
     }
     // Determine if we are in the last block
     if (bufloc->b_index == vi->i_db_count - 1) {
         if ((err = vvsfs_delete_entry_last_block(dir, bufloc))) {
-			DEBUG_LOG("vvsfs - delete_entry_bufloc - failed to delete entry in last block\n");
+            DEBUG_LOG("vvsfs - delete_entry_bufloc - failed to delete entry in "
+                      "last block\n");
             return err;
         }
     } else {
         if ((err = vvsfs_delete_entry_block(dir, vi, bufloc))) {
-			DEBUG_LOG("vvsfs - delete_entry_bufloc - failed to delete entry in block\n");
+            DEBUG_LOG("vvsfs - delete_entry_bufloc - failed to delete entry in "
+                      "block\n");
             return err;
         }
     }
@@ -992,7 +997,7 @@ static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
     int err;
     struct inode *inode = d_inode(dentry);
     struct bufloc_t loc;
-	DEBUG_LOG("vvsfs - unlink\n");
+    DEBUG_LOG("vvsfs - unlink\n");
     err = vvsfs_find_entry(
         dir, dentry, BL_PERSIST_BUFFER | BL_PERSIST_DENTRY, &loc);
     if (err) {
@@ -1005,11 +1010,11 @@ static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
         return err;
     }
     inode->i_ctime = dir->i_ctime;
-	DEBUG_LOG("vvsfs - unlink - link count before: %u\n", inode->i_nlink);
-	inode_dec_link_count(inode);
-	DEBUG_LOG("vvsfs - unlink - link count after: %u\n", inode->i_nlink);
+    DEBUG_LOG("vvsfs - unlink - link count before: %u\n", inode->i_nlink);
+    inode_dec_link_count(inode);
+    DEBUG_LOG("vvsfs - unlink - link count after: %u\n", inode->i_nlink);
     mark_inode_dirty(inode);
-	DEBUG_LOG("vvsfs - unlink - done\n");
+    DEBUG_LOG("vvsfs - unlink - done\n");
     return err;
 }
 
