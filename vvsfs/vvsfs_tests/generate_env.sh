@@ -10,15 +10,6 @@ echo " - VVSFS_HEADER = $VVSFS_HEADER"
 echo " - CC = $CC"
 echo
 
-DEFINES=$( 
-    sed -r '{
-        /^#define/!d
-        /#define[ \t]*[^ \t]*$/d
-        s/[^ \t]*[ \t]*([^ \t]*)[ \t]*(.*)/\1="\2"/
-        /(""|\([^\)]*\))/d
-    }' <($CC -E -dM $VVSFS_HEADER)
-)
-
 DEFINES_NAMES=$(
     sed -nr '{
         /^#define/!d
