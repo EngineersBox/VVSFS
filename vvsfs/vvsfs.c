@@ -622,6 +622,15 @@ vvsfs_mkdir(struct mnt_idmap *namespace,
     return vvsfs_create(namespace, dir, dentry, mode | S_IFDIR, 0);
 }
 
+/* Compare the names of dentries, checks length before comparing
+ * name character entries.
+ *
+ * @name: Dentry name to compare against
+ * @target_name: Dentry name that is being searched for
+ * @target_name_len: Length of target_name string
+ *
+ * @return (int) 1 if names match, 0 otherwise
+ */
 __attribute__((always_inline)) static inline int
 namecmp(const char *name, const char *target_name, int target_name_len) {
     return strlen(name) == target_name_len &&
@@ -646,6 +655,35 @@ typedef struct __attribute__((packed)) bufloc_t {
 #define BL_PERSIST_DENTRY (1 << 2)
 /* Determine if a given flag is set */
 #define bl_flag_set(flags, flag) ((flags) & (flag))
+
+/* Resolves the buffer head and dentry for a given bufloc
+ * if they have not already been. This behaviour is conditional
+ * on the flags set.
+ *
+ * @dir: Target directory inode
+ * @vi: Inode information for target directory inode
+ * @bufloc: Specification of dentry location (does not assume already resolved)
+ *
+ * @return: (int) 0 if successful, error otherwise
+ */
+static int vvsfs_resolve_bufloc(struct inode *dir,
+                                struct vvsfs_inode_info *vi,
+                                struct bufloc_t *bufloc) {
+    if (bufloc == NULL) {
+        return -EINVAL;
+    }
+    if (!bl_flag_set(bufloc->flags, BL_PERSIST_BUFFER)) {
+        bufloc->bh = READ_BLOCK(dir->i_sb, vi, bufloc->b_index);
+        if (!bufloc->bh) {
+            // Buffer read failed, something has changed unexpectedly
+            return -EIO;
+        }
+    }
+    if (!bl_flag_set(bufloc->flags, BL_PERSIST_DENTRY)) {
+        bufloc->dentry = READ_DENTRY(bufloc->bh, bufloc->d_index);
+    }
+    return 0;
+}
 
 /* Find a dentry within a given block by name (returned through parameter)
  *
@@ -883,25 +921,6 @@ static int vvsfs_delete_entry_block(struct inode *dir,
     mark_buffer_dirty(bh_end);
     sync_dirty_buffer(bh_end);
     brelse(bh_end);
-    return 0;
-}
-
-static int vvsfs_resolve_bufloc(struct inode *dir,
-                                struct vvsfs_inode_info *vi,
-                                struct bufloc_t *bufloc) {
-    if (bufloc == NULL) {
-        return -EINVAL;
-    }
-    if (!bl_flag_set(bufloc->flags, BL_PERSIST_BUFFER)) {
-        bufloc->bh = READ_BLOCK(dir->i_sb, vi, bufloc->b_index);
-        if (!bufloc->bh) {
-            // Buffer read failed, something has changed unexpectedly
-            return -EIO;
-        }
-    }
-    if (!bl_flag_set(bufloc->flags, BL_PERSIST_DENTRY)) {
-        bufloc->dentry = READ_DENTRY(bufloc->bh, bufloc->d_index);
-    }
     return 0;
 }
 
