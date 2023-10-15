@@ -11,7 +11,8 @@
 #define VVSFS_INODE_BLOCK_OFF 4   // location of first inode
 #define VVSFS_DATA_BLOCK_OFF 4100 // location of first data block
 #define VVSFS_MAX_DENTRIES ((VVSFS_N_DENTRY_PER_BLOCK * VVSFS_N_BLOCKS))
-
+#define VVSFS_INDIRECT_PTR_SIZE ((sizeof(uint32_t)))
+#define VVSFS_MAX_INDIRECT_PTRS ((VVSFS_BLOCKSIZE / VVSFS_INDIRECT_PTR_SIZE))
 #define VVSFS_MAXFILESIZE ((VVSFS_BLOCKSIZE * VVSFS_N_BLOCKS))
 #define true 1
 #define false 0

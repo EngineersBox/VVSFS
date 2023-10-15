@@ -46,8 +46,8 @@
 #define DEBUG_LOG(msg, ...) ({})
 #endif
 
-#define READ_BLOCK(sb, vi, index)                                              \
-    sb_bread(sb, vvsfs_get_data_block((vi)->i_data[(index)]))
+#define READ_BLOCK_OFF(sb, offset) sb_bread((sb), vvsfs_get_data_block((offset)))
+#define READ_BLOCK(sb, vi, index) READ_BLOCK_OFF(sb, (vi)->i_data[(index)])
 #define READ_DENTRY(bh, offset)                                                \
     ((struct vvsfs_dir_entry *)((bh)->b_data + (offset) * VVSFS_DENTRYSIZE))
 
@@ -61,6 +61,13 @@ typedef uint8_t *bytearray_t;
         __typeof__(a) _a = (a);                                                \
         __typeof__(b) _b = (b);                                                \
         _a > _b ? _a : _b;                                                     \
+    })
+
+#define min(a, b)                                                              \
+    ({                                                                         \
+        __typeof__(a) _a = (a);                                                \
+        __typeof__(b) _b = (b);                                                \
+        _a < _b ? _a : _b;                                                     \
     })
 
 // inode cache -- this is used to attach vvsfs specific inode
@@ -226,10 +233,16 @@ static struct address_space_operations vvsfs_as_operations = {
 // @num_dirs: (output) count of dentries
 // @return: (char*) data buffer returned contains all dentry data, this *MUST*
 //                  be freed after use via `kfree(data)`
+// @return: (char*) data buffer returned contains all dentry data, this *MUST*
+// be
+//                 freed after use via `kfree(data)`
+// @return: (bytearray_t) data buffer returned contains all dentry data, this
+//          *MUST* be freed after use via `kfree(data)`
 static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
     struct vvsfs_inode_info *vi;
     struct super_block *sb;
     struct buffer_head *bh;
+    struct buffer_head *i_bh;
     int i;
     uint32_t db_count;
     bytearray_t data;
@@ -241,9 +254,7 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
     // Retrieve superblock object for R/W to disk blocks
     sb = dir->i_sb;
     // Ensure that we do not read the last block which is an indirection pointer
-    if ((db_count = vi->i_db_count)) {
-        db_count--;
-    }
+    db_count = min(VVSFS_N_BLOCKS - 2, vi->i_db_count);
     DEBUG_LOG("vvsfs - read_dentries - number of dentries to read %d - %d\n",
               *num_dirs,
               vi->i_db_count);
@@ -252,7 +263,7 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
     if (!data) {
         return ERR_PTR(-ENOMEM);
     }
-    DEBUG_LOG("vvsfs - read_dentries - iter\n");
+    DEBUG_LOG("vvsfs - read_dentries - direct blocks\n");
     for (i = 0; i < db_count; ++i) {
         printk("vvsfs - read_entries - reading dno: %d, disk block: %d",
                vi->i_data[i],
@@ -267,6 +278,33 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
         memcpy(data + i * VVSFS_BLOCKSIZE, bh->b_data, VVSFS_BLOCKSIZE);
         brelse(bh);
     }
+    if (!vi->i_data[db_count + 1]) {
+        goto done;
+    }
+    DEBUG_LOG("vvsfs - read_dentries - indirect blocks\n");
+    i_bh = READ_BLOCK(dir->i_sb, vi, VVSFS_N_BLOCKS - 1);
+    if (!i_bh) {
+        // Buffer read failed, no more data when we expected some
+        kfree(data);
+        return ERR_PTR(-EIO);
+    }
+    db_count = vi->i_db_count - db_count;
+    for (i = 0; i < db_count; ++i) {
+        printk("vvsfs - read_entries - reading dno: %d, disk block: %d",
+               vi->i_data[i],
+               vvsfs_get_data_block(vi->i_data[i]));
+        bh = READ_BLOCK_OFF(dir->i_sb, (uint32_t) i_bh->b_data + (i * VVSFS_INDIRECT_PTR_SIZE));
+        if (!bh) {
+            // Buffer read failed, no more data when we expected some
+            kfree(data);
+            return ERR_PTR(-EIO);
+        }
+        // Copy the dentry into the data array
+        memcpy(data + i * VVSFS_BLOCKSIZE, bh->b_data, VVSFS_BLOCKSIZE);
+        brelse(bh);
+    }
+    brelse(i_bh);
+done:
     DEBUG_LOG("vvsfs - read_dentries - done");
     return data;
 }
@@ -490,6 +528,8 @@ vvsfs_new_inode(const struct inode *dir, umode_t mode, dev_t rdev) {
     return inode;
 }
 
+static int vvsfs_add_new_entry_indirect( uint32_t *data_block_index)
+
 // This is a helper function for the "create" inode operation. It adds a new
 // entry to the list of directory entries in the parent directory.
 static int vvsfs_add_new_entry(struct inode *dir,
@@ -518,13 +558,12 @@ static int vvsfs_add_new_entry(struct inode *dir,
         newblock = vvsfs_reserve_data_block(sbi->dmap);
         if (newblock == 0)
             return -ENOSPC;
-        dir_info->i_data[d_pos] = newblock;
+        // TODO: Handle allocating/traversing indirection block to add new entry here
+        dir_info->i_data[d_pos] = dno = newblock;
         dir_info->i_db_count++;
     }
 
     /* Update the on-disk structure */
-
-    dno = dir_info->i_data[d_pos];
     printk("vvsfs - add_new_entry - reading dno: %d, d_pos: %d, block: %d",
            dno,
            d_pos,
