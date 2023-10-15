@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# This script retrieves all of the #define
+# constants used in the VVSFS implementation,
+# evaluates them with the host compiler, and
+# converts them into variables usable in
+# bash scripts as a sourcable env file
+
 ENV_FILE_NAME=${ENV_FILE_NAME:-"vvsfs_env.sh"}
 VVSFS_HEADER=${VVSFS_HEADER:-"../vvsfs.h"}
 CC=${CC:-"$(which gcc)"}
