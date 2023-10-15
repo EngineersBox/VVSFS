@@ -56,6 +56,13 @@
 // byte array usage irrespective of char sizing.
 typedef uint8_t *bytearray_t;
 
+#define max(a, b)                                                              \
+    ({                                                                         \
+        __typeof__(a) _a = (a);                                                \
+        __typeof__(b) _b = (b);                                                \
+        _a > _b ? _a : _b;                                                     \
+    })
+
 // inode cache -- this is used to attach vvsfs specific inode
 // data to the vfs inode
 static struct kmem_cache *vvsfs_inode_cache;
@@ -224,6 +231,7 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
     struct super_block *sb;
     struct buffer_head *bh;
     int i;
+    uint32_t db_count;
     bytearray_t data;
     DEBUG_LOG("vvsfs - read_dentries\n");
     // Retrieve vvsfs specific inode data from dir inode
@@ -232,6 +240,10 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
     *num_dirs = dir->i_size / VVSFS_DENTRYSIZE;
     // Retrieve superblock object for R/W to disk blocks
     sb = dir->i_sb;
+    // Ensure that we do not read the last block which is an indirection pointer
+    if ((db_count = vi->i_db_count)) {
+        db_count--;
+    }
     DEBUG_LOG("vvsfs - read_dentries - number of dentries to read %d - %d\n",
               *num_dirs,
               vi->i_db_count);
@@ -241,7 +253,7 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
         return ERR_PTR(-ENOMEM);
     }
     DEBUG_LOG("vvsfs - read_dentries - iter\n");
-    for (i = 0; i < vi->i_db_count; ++i) {
+    for (i = 0; i < db_count; ++i) {
         printk("vvsfs - read_entries - reading dno: %d, disk block: %d",
                vi->i_data[i],
                vvsfs_get_data_block(vi->i_data[i]));
