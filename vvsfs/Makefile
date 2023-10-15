@@ -1,7 +1,11 @@
 obj-m += vvsfs.o 
 
-KDIR=/lib/modules/$(shell uname -r)/build 
+ifndef PWD
+# Some configurations dont export PWD automatically
+PWD=$(shell pwd)
+endif
 
+KDIR=/lib/modules/$(shell uname -r)/build 
 all: kernel_mod mkfs.vvsfs 
 
 mkfs.vvsfs: mkfs.vvsfs.c
