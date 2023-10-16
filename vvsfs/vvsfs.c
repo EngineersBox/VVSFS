@@ -49,7 +49,7 @@
 #define READ_BLOCK(sb, vi, index)                                              \
     sb_bread(sb, vvsfs_get_data_block((vi)->i_data[(index)]))
 #define READ_DENTRY(bh, offset)                                                \
-    ((struct vvsfs_dir_entry *)((bh)->b_data + (offset)*VVSFS_DENTRYSIZE))
+    ((struct vvsfs_dir_entry *)((bh)->b_data + (offset) * VVSFS_DENTRYSIZE))
 
 // Avoid using char* as a byte array since some systems may have a 16 bit char
 // type this ensures that any system that has 8 bits = 1 byte will be valid for
@@ -178,7 +178,7 @@ static int vvsfs_write_end(struct file *file,
                            unsigned int copied,
                            struct page *page,
                            void *fsdata) {
-    struct inode *inode = file->f_inode;
+    struct inode *inode = mapping->host;
     struct vvsfs_inode_info *vi = VVSFS_I(inode);
     int ret;
 
@@ -274,7 +274,9 @@ static int vvsfs_readdir(struct file *filp, struct dir_context *ctx) {
         return err;
     }
     // Iterate over dentries and emit them into the dcache
-    for (i = 0; i < num_dirs && filp->f_pos < dir->i_size; ++i) {
+    for (i = ctx->pos / VVSFS_DENTRYSIZE;
+         i < num_dirs && filp->f_pos < dir->i_size;
+         ++i) {
         dentry = (struct vvsfs_dir_entry *)(data + i * VVSFS_DENTRYSIZE);
         if (!dir_emit(ctx,
                       dentry->name,
