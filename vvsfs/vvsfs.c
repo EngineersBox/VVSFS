@@ -153,7 +153,8 @@ static int vvsfs_write_end(struct file *file,
                               struct page *page,
                               void *fsdata)
 {
-    struct inode *inode = file->f_inode;
+    //struct inode *inode = file->f_inode;
+    struct inode *inode = mapping->host;
     struct vvsfs_inode_info *vi = VVSFS_I(inode);
     int ret; 
 
