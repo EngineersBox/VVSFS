@@ -57,20 +57,6 @@
 // byte array usage irrespective of char sizing.
 typedef uint8_t *bytearray_t;
 
-#define max(a, b)                                                              \
-    ({                                                                         \
-        __typeof__(a) _a = (a);                                                \
-        __typeof__(b) _b = (b);                                                \
-        _a > _b ? _a : _b;                                                     \
-    })
-
-#define min(a, b)                                                              \
-    ({                                                                         \
-        __typeof__(a) _a = (a);                                                \
-        __typeof__(b) _b = (b);                                                \
-        _a < _b ? _a : _b;                                                     \
-    })
-
 // inode cache -- this is used to attach vvsfs specific inode
 // data to the vfs inode
 static struct kmem_cache *vvsfs_inode_cache;
@@ -229,14 +215,14 @@ static struct address_space_operations vvsfs_as_operations = {
 };
 
 // TODO: Docstring
-static int vvsfs_read_dentires_direct(struct vvsfs_inode_info *vi,
+static int vvsfs_read_dentries_direct(struct vvsfs_inode_info *vi,
                                       struct super_block *sb,
                                       bytearray_t data,
                                       uint32_t db_count) {
     struct buffer_head *bh;
     int i;
     // Ensure that we do not read the last block which is an indirection pointer
-    db_count = min(VVSFS_N_BLOCKS - 2, vi->i_db_count);
+    db_count = min((uint32_t) VVSFS_N_BLOCKS - 2, vi->i_db_count);
     DEBUG_LOG("vvsfs - read_dentries - direct blocks\n");
     for (i = 0; i < db_count; ++i) {
         printk("vvsfs - read_entries - reading dno: %d, disk block: %d",
@@ -265,14 +251,14 @@ static int vvsfs_read_dentries_indirect(struct vvsfs_inode_info *vi,
     int i;
     uint32_t offset;
     DEBUG_LOG("vvsfs - read_dentries - indirect blocks\n");
-    i_bh = READ_BLOCK(dir->i_sb, vi, VVSFS_N_BLOCKS - 1);
+    i_bh = READ_BLOCK(sb, vi, VVSFS_N_BLOCKS - 1);
     if (!i_bh) {
         // Buffer read failed, no more data when we expected some
-        return ERR_PTR(-EIO);
+        return -EIO;
     }
     db_count = vi->i_db_count - db_count;
     for (i = 0; i < db_count; ++i) {
-        offset = (uint32_t)i_bh->b_data + (i * VVSFS_INDIRECT_PTR_SIZE);
+        offset = (uint32_t)(*(i_bh->b_data + (i * VVSFS_INDIRECT_PTR_SIZE)));
         printk("vvsfs - read_entries - reading dno: %d, disk block: %d",
                vi->i_data[i],
                vvsfs_get_data_block(vi->i_data[i]));
@@ -280,13 +266,14 @@ static int vvsfs_read_dentries_indirect(struct vvsfs_inode_info *vi,
         if (!bh) {
             // Buffer read failed, no more data when we expected some
             brelse(i_bh);
-            return ERR_PTR(-EIO);
+            return -EIO;
         }
         // Copy the dentry into the data array
         memcpy(data + i * VVSFS_BLOCKSIZE, bh->b_data, VVSFS_BLOCKSIZE);
         brelse(bh);
     }
     brelse(i_bh);
+    return 0;
 }
 
 // vvsfs_read_dentries - reads all dentries into memory for a given inode
@@ -303,8 +290,6 @@ static int vvsfs_read_dentries_indirect(struct vvsfs_inode_info *vi,
 static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
     struct vvsfs_inode_info *vi;
     struct super_block *sb;
-    struct buffer_head *bh;
-    struct buffer_head *i_bh;
     int err;
     uint32_t db_count;
     bytearray_t data;
@@ -399,7 +384,7 @@ vvsfs_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags) {
     int i;
     struct inode *inode = NULL;
     struct vvsfs_dir_entry *dent;
-    char *target_name;
+    const char *target_name;
     int target_name_len;
     bytearray_t data;
     target_name = dentry->d_name.name;
@@ -560,15 +545,14 @@ vvsfs_new_inode(const struct inode *dir, umode_t mode, dev_t rdev) {
 #define READ_INDIRECT_BLOCK(sb, indirect_bh, i)                                \
     READ_BLOCK_OFF(                                                            \
         sb,                                                                    \
-        (uint32_t)((indirect_bh)->b_data +                                     \
-        ((i) * VVSFS_INDIRECT_PTR_SIZE)))
+        (uint32_t)(*((indirect_bh)->b_data + ((i)*VVSFS_INDIRECT_PTR_SIZE))))
 
 static int vvsfs_assign_data_block(struct vvsfs_inode_info *dir_info,
-                                   struct super_block sb,
+                                   struct super_block *sb,
                                    uint32_t d_pos) {
     struct buffer_head *bh;
-    uint32_t count;
-    uint32_t newblock = vvsfs_reserve_data_block(sb->s_fs_info->dmap);
+    struct vvsfs_sb_info *sbi = sb->s_fs_info;
+    uint32_t newblock = vvsfs_reserve_data_block(sbi->dmap);
     if (!newblock) {
         return -ENOSPC;
     }
@@ -581,21 +565,19 @@ static int vvsfs_assign_data_block(struct vvsfs_inode_info *dir_info,
     }
     bh = READ_BLOCK(sb, dir_info, VVSFS_LAST_DIRECT_BLOCK_INDEX);
     if (!bh) {
-        vvsfs_free_data_block();
+        vvsfs_free_data_block(sbi->dmap, newblock);
         return -EIO;
     }
     dir_info->i_db_count++;
-    memset(
-        bh->b_data
-        + ((dir_info->i_db_count - VVSFS_LAST_DIRECT_BLOCK_INDEX)
-        * VVSFS_INDIRECT_PTR_SIZE),
-        (int) newblock,
-        VVSFS_INDIRECT_PTR_SIZE
-    );
+    memset(bh->b_data +
+               ((dir_info->i_db_count - VVSFS_LAST_DIRECT_BLOCK_INDEX) *
+                VVSFS_INDIRECT_PTR_SIZE),
+           (int)newblock,
+           VVSFS_INDIRECT_PTR_SIZE);
     mark_buffer_dirty(bh);
     sync_dirty_buffer(bh);
     brelse(bh);
-    return newblock
+    return newblock;
 }
 
 // This is a helper function for the "create"
@@ -607,7 +589,6 @@ static int vvsfs_add_new_entry(struct inode *dir,
                                struct inode *inode) {
     struct vvsfs_inode_info *dir_info = VVSFS_I(dir);
     struct super_block *sb = dir->i_sb;
-    struct vvsfs_sb_info *sbi = sb->s_fs_info;
     struct vvsfs_dir_entry *dent;
     struct buffer_head *bh;
     int num_dirs;
@@ -635,7 +616,7 @@ static int vvsfs_add_new_entry(struct inode *dir,
         if (newblock < 0) {
             return newblock;
         }
-        dno = (uint32_t) newblock;
+        dno = (uint32_t)newblock;
     }
 
     /* Update the on-disk structure */
@@ -663,11 +644,11 @@ static int vvsfs_add_new_entry(struct inode *dir,
     brelse(bh);
 
     DEBUG_LOG("vvsfs - add_new_entry - directory "
-               "entry (%s, %d) added to "
-               "block %d",
-               dent->name,
-               dent->inode_number,
-               vvsfs_get_data_block(dir_info->i_data[d_pos]));
+              "entry (%s, %d) added to "
+              "block %d",
+              dent->name,
+              dent->inode_number,
+              vvsfs_get_data_block(dir_info->i_data[d_pos]));
 
     dir->i_size = (num_dirs + 1) * VVSFS_DENTRYSIZE;
     dir->i_blocks = dir_info->i_db_count * (VVSFS_BLOCKSIZE / VVSFS_SECTORSIZE);
@@ -911,37 +892,6 @@ vvsfs_mkdir(struct mnt_idmap *namespace,
     return vvsfs_create(namespace, dir, dentry, mode | S_IFDIR, 0);
 }
 
-/* Compare the names of dentries, checks length before comparing
- * name character entries.
- *
- * @name: Dentry name to compare against
- * @target_name: Dentry name that is being searched for
- * @target_name_len: Length of target_name string
- *
- * @return (int) 1 if names match, 0 otherwise
- */
-__attribute__((always_inline)) static inline bool
-namecmp(const char *name, const char *target_name, int target_name_len) {
-    return strlen(name) == target_name_len &&
-           strncmp(name, target_name, target_name_len) == 0;
-}
-
-/* Compare the names of dentries, checks length before
- * comparing name character entries.
- *
- * @name: Dentry name to compare against
- * @target_name: Dentry name that is being searched
- * for
- * @target_name_len: Length of target_name string
- *
- * @return (int) 1 if names match, 0 otherwise
- */
-__attribute__((always_inline)) static inline bool
-namecmp(const char *name, const char *target_name, int target_name_len) {
-    return strlen(name) == target_name_len &&
-           strncmp(name, target_name, target_name_len) == 0;
-}
-
 /* Representation of a location of a dentry within
  * the data blocks.
  */
@@ -1083,48 +1033,22 @@ static int vvsfs_find_entry_in_block(struct buffer_head *bh,
     (count) = ((dir)->i_size / VVSFS_DENTRYSIZE) % VVSFS_N_DENTRY_PER_BLOCK;   \
     (count) = (count) == 0 ? VVSFS_N_DENTRY_PER_BLOCK : (count)
 
-/* Find a given entry within the given directory inode
- *
- * @dir: Inode representation of directory to search
- * @dentry: Target dentry (name, length, etc)
- * @flags: Behavioural flags for bufloc_t data
- * @out_loc: Returned data for location of entry if
- * found
- *
- * @return: (int): 0 if found, 1 if not found,
- * otherwise and error
- */
-static int vvsfs_find_entry(struct inode *dir,
-                            struct dentry *dentry,
-                            unsigned flags,
-                            struct bufloc_t *out_loc) {
-    struct vvsfs_inode_info *vi;
-    struct super_block *sb;
-    struct buffer_head *i_bh;
+static int vvsfs_find_entry_direct(struct vvsfs_inode_info *vi,
+                                   struct super_block *sb,
+                                   struct dentry *dentry,
+                                   struct bufloc_t *out_loc,
+                                   unsigned flags,
+                                   int last_block_dentry_count) {
     struct buffer_head *bh;
+    const char *target_name;
     int i;
     int direct_blocks;
-    int indirect_blocks;
-    int last_block_dentry_count;
     int current_block_dentry_count;
-    const char *target_name;
     int target_name_len;
-    DEBUG_LOG("vvsfs - find_entry\n");
+    DEBUG_LOG("vvsfs - find_entry - direct blocks\n");
     target_name = dentry->d_name.name;
     target_name_len = dentry->d_name.len;
-    // Retrieve vvsfs specific inode data from dir
-    // inode
-    vi = VVSFS_I(dir);
-    sb = dir->i_sb;
-    LAST_BLOCK_DENTRY_COUNT(dir, last_block_dentry_count);
-    DEBUG_LOG("vvsfs - find_entry - number of blocks "
-              "to read %d\n",
-              vi->i_db_count);
-    // Progressively load datablocks into memory and
-    // check dentries
-    // TODO: Refactor each direct/indirect section to standalone method
-    DEBUG_LOG("vvsfs - find_entry - direct blocks\n");
-    direct_blocks = min(vi->i_db_count, VVSFS_LAST_DIRECT_BLOCK_INDEX);
+    direct_blocks = min(vi->i_db_count, (uint32_t) VVSFS_LAST_DIRECT_BLOCK_INDEX);
     for (i = 0; i < direct_blocks; i++) {
         printk("vvsfs - find_entry - reading dno: "
                "%d, disk block: %d",
@@ -1152,8 +1076,26 @@ static int vvsfs_find_entry(struct inode *dir,
         // buffer_head release is handled within block
         // search
     }
+    return 1;
+}
+
+static int vvsfs_find_entry_indirect(struct vvsfs_inode_info *vi,
+                                     struct super_block *sb,
+                                     struct dentry *dentry,
+                                     struct bufloc_t *out_loc,
+                                     unsigned flags,
+                                     int last_block_dentry_count) {
+    struct buffer_head *i_bh;
+    struct buffer_head *bh;
+    const char *target_name;
+    int indirect_blocks;
+    int current_block_dentry_count;
+    int i;
+    int target_name_len;
     DEBUG_LOG("vvsfs - find_entry - indirect blocks\n");
-    i_bh = READ_BLOCK(dir->i_sb, vi, VVSFS_LAST_DIRECT_BLOCK_INDEX);
+    target_name = dentry->d_name.name;
+    target_name_len = dentry->d_name.len;
+    i_bh = READ_BLOCK(sb, vi, VVSFS_LAST_DIRECT_BLOCK_INDEX);
     if (!i_bh) {
         return -EIO;
     }
@@ -1182,6 +1124,49 @@ static int vvsfs_find_entry(struct inode *dir,
         // search
     }
     brelse(i_bh);
+    return 1;
+}
+
+/* Find a given entry within the given directory inode
+ *
+ * @dir: Inode representation of directory to search
+ * @dentry: Target dentry (name, length, etc)
+ * @flags: Behavioural flags for bufloc_t data
+ * @out_loc: Returned data for location of entry if
+ * found
+ *
+ * @return: (int): 0 if found, 1 if not found,
+ * otherwise and error
+ */
+static int vvsfs_find_entry(struct inode *dir,
+                            struct dentry *dentry,
+                            unsigned flags,
+                            struct bufloc_t *out_loc) {
+    struct vvsfs_inode_info *vi;
+    struct super_block *sb;
+    int result;
+    int last_block_dentry_count;
+    DEBUG_LOG("vvsfs - find_entry\n");
+    // Retrieve vvsfs specific inode data from dir
+    // inode
+    vi = VVSFS_I(dir);
+    sb = dir->i_sb;
+    LAST_BLOCK_DENTRY_COUNT(dir, last_block_dentry_count);
+    DEBUG_LOG("vvsfs - find_entry - number of blocks "
+              "to read %d\n",
+              vi->i_db_count);
+    // Progressively load datablocks into memory and
+    // check dentries
+    result = vvsfs_find_entry_direct(
+        vi, sb, dentry, out_loc, flags, last_block_dentry_count);
+    if (result <= 0) {
+        return result;
+    }
+    result = vvsfs_find_entry_indirect(
+        vi, sb, dentry, out_loc, flags, last_block_dentry_count);
+    if (result <= 0) {
+        return result;
+    }
     DEBUG_LOG("vvsfs - find_entry - done (not found)");
     return 1;
 }
