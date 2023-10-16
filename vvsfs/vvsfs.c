@@ -566,31 +566,37 @@ vvsfs_new_inode(const struct inode *dir, umode_t mode, dev_t rdev) {
 
 static int vvsfs_assign_data_block(struct vvsfs_inode_info *dir_info,
                                    struct super_block sb,
-                                   uint32_t dpos,
-                                   uint32_t newblock) {
-    struct buffer_head *i_bh;
+                                   uint32_t d_pos) {
     struct buffer_head *bh;
     uint32_t count;
-    uint32_t b_pos uint32_t b_off;
+    uint32_t newblock = vvsfs_reserve_data_block(sb->s_fs_info->dmap);
+    if (!newblock) {
+        return -ENOSPC;
+    }
     if (dir_info->i_db_count < VVSFS_LAST_DIRECT_BLOCK_INDEX) {
         // Still have room in direct blocks, assign
         // there
-        dir_info->i_data[dpos] = newblock;
+        dir_info->i_data[d_pos] = newblock;
         dir_info->i_db_count++;
-        return 0;
+        return newblock;
     }
-    i_bh = READ_BLOCK(sb, dir_info, VVSFS_LAST_DIRECT_BLOCK_INDEX);
-    if (!i_bh) {
-        return -EIO;
-    }
-    bh = READ_INDIRECT_BLOCK(sb, i_bh, dir_info);
+    bh = READ_BLOCK(sb, dir_info, VVSFS_LAST_DIRECT_BLOCK_INDEX);
     if (!bh) {
-        brelse(i_bh);
+        vvsfs_free_data_block();
         return -EIO;
     }
-    count = dir_info->i_db_count - VVSFS_LAST_DIRECT_BLOCK_INDEX;
-    b_pos = count / VVSFS_MAX_INDIRECT_PTRS;
-    b_off = count % VVSFS_MAX_INDIRECT_PTRS;
+    dir_info->i_db_count++;
+    memset(
+        bh->b_data
+        + ((dir_info->i_db_count - VVSFS_LAST_DIRECT_BLOCK_INDEX)
+        * VVSFS_INDIRECT_PTR_SIZE),
+        (int) newblock,
+        VVSFS_INDIRECT_PTR_SIZE
+    );
+    mark_buffer_dirty(bh);
+    sync_dirty_buffer(bh);
+    brelse(bh);
+    return newblock
 }
 
 // This is a helper function for the "create"
@@ -606,12 +612,13 @@ static int vvsfs_add_new_entry(struct inode *dir,
     struct vvsfs_dir_entry *dent;
     struct buffer_head *bh;
     int num_dirs;
-    uint32_t d_pos, d_off, dno, newblock;
+    uint32_t d_pos, d_off, dno;
+    int newblock;
 
     // calculate the number of entries from the i_size
     // of the directory's inode.
     num_dirs = dir->i_size / VVSFS_DENTRYSIZE;
-    if (num_dirs >= VVSFS_MAX_DENTRIES)
+    if (num_dirs >= VVSFS_MAX_DENTRIES) // TODO: Change MAX_DENTRIES to include indirect blocks
         return -ENOSPC;
 
     // Calculate the position of the new entry within
@@ -624,13 +631,11 @@ static int vvsfs_add_new_entry(struct inode *dir,
     if (d_pos >= dir_info->i_db_count) {
         printk("vvsfs - create - add new data block "
                "for directory entry");
-        newblock = vvsfs_reserve_data_block(sbi->dmap);
-        if (newblock == 0)
-            return -ENOSPC;
-        // TODO: Handle allocating/traversing
-        // indirection block to add new entry here
-        dir_info->i_data[d_pos] = dno = newblock;
-        dir_info->i_db_count++;
+        newblock = vvsfs_assign_data_block(dir_info, sb, d_pos);
+        if (newblock < 0) {
+            return newblock;
+        }
+        dno = (uint32_t) newblock;
     }
 
     /* Update the on-disk structure */
