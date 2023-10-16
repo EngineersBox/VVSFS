@@ -32,7 +32,7 @@ EXPANSION_CODE=$(
 # returns an exit code of 1, we need to ensure
 # that it doesnt trigger any wrapping scripts
 # with "set -e"
-read -r -d '' EXPANSION_CODE <<EOF
+read -r -d '' EXPANSION_CODE <<-EOF || true
 #include "$VVSFS_HEADER"
 #include <stdio.h>
 #define format_specifier(x) _Generic((x), \
