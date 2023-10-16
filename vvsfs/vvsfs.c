@@ -1453,11 +1453,6 @@ static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
     if (err) {
         DEBUG_LOG("vvsfs - unlink - failed to find entry\n");
         return -ENOENT;
-        DEBUG_LOG("vvsfs - unlink - failed to find entry\n");
-        return err;
-        DEBUG_LOG("vvsfs - unlink - failed to find "
-                  "entry\n");
-        return err;
     }
     err = vvsfs_delete_entry_bufloc(dir, &loc);
     if (err) {
