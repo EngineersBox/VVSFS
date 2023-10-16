@@ -28,13 +28,6 @@
 #define DEBUG 1
 #define LOG_FILE_PATH 0
 
-#define __LOG(prefix, msg, ...)                                                \
-    printk(prefix "%s(" FILE_FORMAT_PARAMETER "%d) :: " msg,                   \
-           __func__,                                                           \
-           FILE_MARKER __LINE__,                                               \
-           ##__VA_ARGS__)
-#define LOG(msg, ...) __LOG("", msg, __VA_ARGS__)
-
 #if defined(LOG_FILE_PATH) && LOG_FILE_PATH == 1
 #define FILE_FORMAT_PARAMETER "%s:"
 #define FILE_MARKER __FILE__
@@ -43,8 +36,15 @@
 #define FILE_MARKER
 #endif
 
+#define __LOG(prefix, msg, ...)                                                \
+    printk(prefix "%s(" FILE_FORMAT_PARAMETER "%d) :: " msg,                   \
+           __func__,                                                           \
+           FILE_MARKER __LINE__,                                               \
+           ##__VA_ARGS__)
+#define LOG(msg, ...) __LOG("", msg, ##__VA_ARGS__)
+
 #if defined(DEBUG) && DEBUG == 1
-#define DEBUG_LOG(msg, ...) __LOG("[DEBUG] ", msg, __VA_ARGS__)
+#define DEBUG_LOG(msg, ...) __LOG("[DEBUG] ", msg, ##__VA_ARGS__)
 #else
 #define DEBUG_LOG(msg, ...) ({})
 #endif
@@ -340,7 +340,7 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
 }
 
 static void vvsfs_dump_dentry(struct vvsfs_dir_entry *dentry) {
-    DEBUG_LOG("vvsfs - dump_entry - name: %s, len: %u, inode: %s\n",
+    DEBUG_LOG("vvsfs - dump_entry - name: %s, len: %lu, inode: %u\n",
               dentry->name,
               strnlen(dentry->name, VVSFS_MAXNAME),
               dentry->inode_number);
@@ -656,10 +656,10 @@ static int vvsfs_add_new_entry(struct inode *dir,
     // of the directory's inode.
     num_dirs = dir->i_size / VVSFS_DENTRYSIZE;
     if (num_dirs >= VVSFS_MAX_DENTRIES) {
-        DEBUG_LOG("vvsfs - add_new_entry - exceeded max dentries %d >= %d, "
-                  "(i_size: %d)\n",
+        DEBUG_LOG("vvsfs - add_new_entry - exceeded max dentries %d >= %u, "
+                  "(i_size: %lld)\n",
                   num_dirs,
-                  VVSFS_MAX_DENTRIES,
+                  (uint32_t)VVSFS_MAX_DENTRIES,
                   dir->i_size);
         return -ENOSPC;
     }
