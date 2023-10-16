@@ -237,7 +237,7 @@ vvsfs_readdir(struct file *filp, struct dir_context *ctx)
         brelse(bh); 
     }
 
-    for(i=0; i < num_dirs && filp->f_pos < dir->i_size; ++i)
+    for(i=ctx->pos/VVSFS_DENTRYSIZE; i < num_dirs && filp->f_pos < dir->i_size; ++i)
     {
         dent = (struct vvsfs_dir_entry *) (data + i*VVSFS_DENTRYSIZE); 
         if(!dir_emit(ctx, dent->name, strnlen(dent->name, VVSFS_MAXNAME), 
