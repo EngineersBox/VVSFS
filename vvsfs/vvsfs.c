@@ -571,7 +571,7 @@ vvsfs_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags) {
     const char *target_name;
     int target_name_len;
     bytearray_t data;
-    target_name = dentry->d_name.name;
+    target_name = (char *)dentry->d_name.name;
     target_name_len = dentry->d_name.len;
     DEBUG_LOG("vvsfs - lookup\n");
     if (dentry->d_name.len > VVSFS_MAXNAME) {
@@ -812,9 +812,7 @@ static int vvsfs_add_new_entry(struct inode *dir,
 
     dir->i_size = (num_dirs + 1) * VVSFS_DENTRYSIZE;
     dir->i_blocks = dir_info->i_db_count * (VVSFS_BLOCKSIZE / VVSFS_SECTORSIZE);
-
-    // update time for posix compliance
-    dir->i_atime = dir->i_mtime = dir->i_ctime = current_time(dir);
+    dir->i_ctime = dir->i_mtime = current_time(dir);
     mark_inode_dirty(dir);
     return 0;
 }
@@ -1054,168 +1052,6 @@ vvsfs_mkdir(struct mnt_idmap *namespace,
             struct dentry *dentry,
             umode_t mode) {
     return vvsfs_create(namespace, dir, dentry, mode | S_IFDIR, 0);
-}
-
-// https://elixir.bootlin.com/linux/v5.15.84/source/fs/minix/namei.c#L187
-// https://elixir.bootlin.com/linux/latest/source/fs/ext2/namei.c#L317
-static int vvsfs_rename(struct user_namespace *namespace,
-                        struct inode *old_dir,
-                        struct dentry *old_dentry,
-                        struct inode *new_dir,
-                        struct dentry *new_dentry,
-                        unsigned int flags) {
-    int num_dirs;
-    int dents_in_last_block;
-    int dents_in_this_block;
-    int blk, d;
-    struct vvsfs_inode_info *vi;
-    struct vvsfs_dir_entry *dent;
-    struct vvsfs_dir_entry *last_dent;
-    struct vvsfs_dir_entry saved_dent;
-    struct buffer_head *bh;
-    struct buffer_head *bh_endblock;
-    struct super_block *sb;
-    struct inode fake_inode;
-
-    if (DEBUG)
-        printk("vvsfs - rename\n");
-
-    if (new_dentry->d_name.len > VVSFS_MAXNAME) {
-        printk("vvsfs - rename - file name too long");
-        return -ENAMETOOLONG;
-    }
-
-    // Get key information (superblock, vvsfs inode)
-    sb = old_dir->i_sb;
-    vi = VVSFS_I(old_dir);
-    if (!vi) {
-        printk("vvsfs - rename - vi null!");
-        return -EINVAL;
-    }
-
-    num_dirs = old_dir->i_size / VVSFS_DENTRYSIZE;
-    if (num_dirs == 0) {
-        printk("vvsfs - rename - the source directory was empty");
-        return -ENOENT;
-    }
-
-    // Calculate how many dentry items there will be in the last data
-    // block for this directory
-    dents_in_last_block = num_dirs % VVSFS_N_DENTRY_PER_BLOCK;
-    if (dents_in_last_block == 0) {
-        dents_in_last_block = VVSFS_N_DENTRY_PER_BLOCK;
-    }
-
-    // Read every data block in the directory into memory one by one
-    for (blk = 0; blk < vi->i_db_count; ++blk) {
-        printk("vvsfs - rename - reading blk: %d, dno: %d, disk block: %d",
-               blk,
-               vi->i_data[blk],
-               vvsfs_get_data_block(vi->i_data[blk]));
-
-        // Read this block into memory using buffer_head
-        bh = sb_bread(sb, vvsfs_get_data_block(vi->i_data[blk]));
-        if (!bh)
-            return -ENOMEM;
-        // All blocks other than the last block will contain the max number of
-        // dentries
-        dents_in_this_block = (blk == vi->i_db_count - 1)
-                                  ? dents_in_last_block
-                                  : VVSFS_N_DENTRY_PER_BLOCK;
-        for (d = 0; d < dents_in_this_block; d++) {
-            dent = (struct vvsfs_dir_entry *)(bh->b_data) + d;
-
-            // Find the dentry we want to rename
-            if ((strlen(dent->name) == old_dentry->d_name.len) &&
-                strncmp(dent->name,
-                        old_dentry->d_name.name,
-                        old_dentry->d_name.len) == 0) {
-
-                // If we are simply renaming a file within the same directory,
-                // there is no need to delete any dentries
-                if (old_dir->i_ino == new_dir->i_ino) {
-                    // Copy the new name into the dentry
-                    strncpy(dent->name,
-                            new_dentry->d_name.name,
-                            new_dentry->d_name.len);
-                    dent->name[new_dentry->d_name.len] = '\0';
-                    // Persist the changes
-                    mark_buffer_dirty(bh);
-                    sync_dirty_buffer(bh);
-                    brelse(bh);
-                    // Nothing else to do; return out of the loops
-                    return 0;
-                }
-
-                // Otherwise, if we are moving a file from one directory to
-                // another, we need to:
-                // - Save a copy of the existing dentry
-                // - Overwrite the dentry with the last dentry in the last block
-                // - Reduce the directory count, effectively deleting the last
-                //   dentry in the last block
-
-                // Make a copy of the old dentry before we overwrite it
-                memcpy(&saved_dent, dent, sizeof(struct vvsfs_dir_entry));
-
-                // Now we want to delete the old dentry
-                if (blk == vi->i_db_count - 1) {
-                    // If we are in the last block, we only need to operate on a
-                    // single logical disk block
-                    if (d == dents_in_last_block - 1) {
-                        // If this is the last dentry in the last block, simply
-                        // delete it, no further action required
-                        memset(dent, 0, sizeof(struct vvsfs_dir_entry));
-                    } else {
-                        // Otherwise, if this dentry is not the last dentry, we
-                        // need to copy the last dentry to overwrite this one
-                        last_dent = (struct vvsfs_dir_entry *)(bh->b_data) +
-                                    (dents_in_last_block - 1);
-                        memcpy(dent, last_dent, VVSFS_DENTRYSIZE);
-                        // Delete the last dentry (as it has been moved)
-                        memset(last_dent, 0, VVSFS_DENTRYSIZE);
-                    }
-                } else {
-                    // If this dentry is not in the last block; we need to take
-                    // the last dentry from the last block and use it to
-                    // overwrite this dentry
-                    bh_endblock = sb_bread(
-                        sb,
-                        vvsfs_get_data_block(vi->i_data[vi->i_db_count - 1]));
-                    if (!bh)
-                        return -ENOMEM;
-                    last_dent =
-                        (struct vvsfs_dir_entry *)(bh_endblock->b_data) +
-                        (dents_in_last_block - 1);
-                    memcpy(dent, last_dent, VVSFS_DENTRYSIZE);
-                    // Delete the last dentry, as it has been moved
-                    memset(last_dent, 0, VVSFS_DENTRYSIZE);
-                    // Persist the changes to the last block
-                    mark_buffer_dirty(bh_endblock);
-                    sync_dirty_buffer(bh_endblock); // TODO is this necessary?
-                    brelse(bh_endblock);
-                }
-                old_dir->i_size -= VVSFS_DENTRYSIZE;
-
-                // Persist the deletion of the old dentry
-                mark_buffer_dirty(bh);
-                // TODO check if this is necessary (awaiting Ed response):
-                // https://edstem.org/au/courses/12685/discussion/1631644
-                sync_dirty_buffer(bh);
-                brelse(bh);
-
-                // Insert the saved dentry into it's new position
-                // As an optimisation, we create a fake inode rather than
-                // searching the disk for the actual inode struct for the file,
-                // since only the inode number is needed by vvsfs_add_new_entry
-                fake_inode.i_ino = saved_dent.inode_number;
-                vvsfs_add_new_entry(new_dir, new_dentry, &fake_inode);
-                return 0;
-            }
-        }
-    }
-    // The above loop can only terminate without returning if we never find a
-    // dentry with the given name
-    return -ENOENT;
 }
 
 /* Representation of a location of a dentry within
@@ -2160,11 +1996,90 @@ static int vvsfs_rmdir(struct inode *dir, struct dentry *dentry) {
     return err;
 }
 
-// File operations; leave as is. We are using the
-// generic VFS implementations to take care of
-// read/write/seek/fsync. The read/write operations
-// rely on the address space operations, so there's no
-// need to modify these.
+static int vvsfs_rename(struct user_namespace *namespace,
+                        struct inode *old_dir,
+                        struct dentry *old_dentry,
+                        struct inode *new_dir,
+                        struct dentry *new_dentry,
+                        unsigned int flags) {
+    int err;
+    struct bufloc_t loc;
+    struct inode *old_inode = d_inode(old_dentry);
+    struct inode *new_inode = d_inode(new_dentry);
+
+    DEBUG_LOG("vvsfs - rename\n");
+
+    // Check the filename isn't too long
+    if (new_dentry->d_name.len > VVSFS_MAXNAME) {
+        printk("vvsfs - rename - file name too long");
+        return -ENAMETOOLONG;
+    }
+
+    // Check if we are overwriting a non-empty directory
+    if (new_inode && S_ISDIR(old_inode->i_mode) &&
+        !vvsfs_empty_dir(new_inode)) {
+        DEBUG_LOG(
+            "vvsfs - rename - target exists and is non-empty directory\n");
+        err = -ENOTEMPTY;
+        goto out_err;
+    }
+
+    // Find the original dentry for the file
+    err = vvsfs_find_entry(
+        old_dir, old_dentry, BL_PERSIST_BUFFER | BL_PERSIST_DENTRY, &loc);
+    if (err) {
+        DEBUG_LOG("vvsfs - rename - failed to find entry\n");
+        err = -ENOENT;
+        goto out_err;
+    }
+
+    // Check if we are simply renaming a file in the same directory
+    if (new_dir == old_dir) {
+        // Update the name of the file directly within the dentry
+        strncpy(
+            loc.dentry->name, new_dentry->d_name.name, new_dentry->d_name.len);
+        loc.dentry->name[new_dentry->d_name.len] = '\0';
+
+        // Persist the changes
+        mark_buffer_dirty(loc.bh);
+        sync_dirty_buffer(loc.bh);
+        brelse(loc.bh);
+
+        // Update parent dir metadata
+        new_dir->i_ctime = new_dir->i_mtime = current_time(new_dir);
+        mark_inode_dirty(new_dir);
+
+        return 0;
+    }
+
+    // Copy the dentry to the new location
+    // Note this automatically checks to see if the directory is full
+    err = vvsfs_add_new_entry(new_dir, new_dentry, old_inode);
+    if (err) {
+        DEBUG_LOG("vvsfs - rename - failed to create dentry in new location\n");
+        goto out_needs_brelse;
+    }
+
+    // Delete the dentry from the old position
+    err = vvsfs_delete_entry_bufloc(old_dir, &loc);
+    if (err) {
+        DEBUG_LOG("vvsfs - rename - failed to delete entry\n");
+        goto out_err;
+    }
+
+    // TODO update access/modification times of old or new?
+    DEBUG_LOG("vvsfs - rename - done\n");
+    return 0;
+
+out_needs_brelse:
+    brelse(loc.bh);
+out_err:
+    return err;
+}
+
+// File operations; leave as is. We are using the generic VFS implementations
+// to take care of read/write/seek/fsync. The read/write operations rely on the
+// address space operations, so there's no need to modify these.
 static struct file_operations vvsfs_file_operations = {
     .llseek = generic_file_llseek,
     .fsync = generic_file_fsync,
