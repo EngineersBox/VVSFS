@@ -222,7 +222,15 @@ static struct address_space_operations vvsfs_as_operations = {
     .write_end = vvsfs_write_end,
 };
 
-// TODO: Docstring
+/* Read all direct block dentries into memory for a given inode
+ *
+ * @vi: Inode information for target inode
+ * @sb: Superblock of the filesystem
+ * @data: Data array to write dentries into
+ * @db_count: Number of data blocks
+ *
+ * @return: (int) 0 if successful, error otherwise
+ */
 static int vvsfs_read_dentries_direct(struct vvsfs_inode_info *vi,
                                       struct super_block *sb,
                                       bytearray_t data,
@@ -253,7 +261,15 @@ static int vvsfs_read_dentries_direct(struct vvsfs_inode_info *vi,
     return 0;
 }
 
-// TODO: Docstring
+/* Read all indirect block dentries into memory for a given inode
+ *
+ * @vi: Inode information for target inode
+ * @sb: Superblock of the filesystem
+ * @data: Data array to write dentries into
+ * @db_count: Number of data blocks
+ *
+ * @return: (int) 0 if successful, error otherwise
+ */
 static int vvsfs_read_dentries_indirect(struct vvsfs_inode_info *vi,
                                         struct super_block *sb,
                                         bytearray_t data,
@@ -339,13 +355,6 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
     return data;
 }
 
-static void vvsfs_dump_dentry(struct vvsfs_dir_entry *dentry) {
-    DEBUG_LOG("vvsfs - dump_entry - name: %s, len: %lu, inode: %u\n",
-              dentry->name,
-              strnlen(dentry->name, VVSFS_MAXNAME),
-              dentry->inode_number);
-}
-
 // vvsfs_readdir - reads a directory and places the result using filldir, cached
 // in dcache
 static int vvsfs_readdir(struct file *filp, struct dir_context *ctx) {
@@ -370,7 +379,6 @@ static int vvsfs_readdir(struct file *filp, struct dir_context *ctx) {
          ++i) {
         dentry = (struct vvsfs_dir_entry *)(data + i * VVSFS_DENTRYSIZE);
         DEBUG_LOG("vvsfs - readdir - emitting dentry %d: %p\n", i, dentry);
-        vvsfs_dump_dentry(dentry);
         if (!(err = dir_emit(ctx,
                              dentry->name,
                              strnlen(dentry->name, VVSFS_MAXNAME),
@@ -568,6 +576,16 @@ vvsfs_new_inode(const struct inode *dir, umode_t mode, dev_t rdev) {
     return inode;
 }
 
+/* Given a position into the target inode data blocks,
+ * create and assign a new data block.
+ *
+ * @dir_info: Inode information of target inode
+ * @sb: Superblock of the filesystem
+ * @d_pos: Data block position to create at
+ *
+ * @return: (int) 0 or greater, data block map index,
+ *                error otherwise
+ */
 static int vvsfs_assign_data_block(struct vvsfs_inode_info *dir_info,
                                    struct super_block *sb,
                                    uint32_t d_pos) {
@@ -613,7 +631,16 @@ done:
     return newblock;
 }
 
-// TODO: Docstring
+/* Calculate the data block map index for a given position
+ * within the given inode data blocks.
+ *
+ * @vi: Inode information of the target inode
+ * @sb: Superblock of the filesytsem
+ * @d_pos: Position of the data block within the inode
+ *
+ * @return: (int): 0 or greater if data block exists in
+ *                 inode, error otherwise
+ */
 static int vvsfs_index_data_block(struct vvsfs_inode_info *vi,
                                   struct super_block *sb,
                                   uint32_t d_pos) {
@@ -1106,6 +1133,19 @@ static int vvsfs_find_entry_in_block(struct buffer_head *bh,
     (count) = ((dir)->i_size / VVSFS_DENTRYSIZE) % VVSFS_N_DENTRY_PER_BLOCK;   \
     (count) = (count) == 0 ? VVSFS_N_DENTRY_PER_BLOCK : (count)
 
+/* Find a given entry within the given directory inode
+ * direct blocks
+ *
+ * @vi: Inode info of directory to search
+ * @sb: Superblock of filesystem
+ * @dentry: Target dentry (name, length, etc)
+ * @flags: Behavioural flags for bufloc_t data
+ * @out_loc: Returned data for location of entry if
+ * found
+ *
+ * @return: (int): 0 if found, 1 if not found,
+ *                 otherwise an error
+ */
 static int vvsfs_find_entry_direct(struct vvsfs_inode_info *vi,
                                    struct super_block *sb,
                                    struct dentry *dentry,
@@ -1153,6 +1193,19 @@ static int vvsfs_find_entry_direct(struct vvsfs_inode_info *vi,
     return 1;
 }
 
+/* Find a given entry within the given directory inode
+ * indirect blocks
+ *
+ * @vi: Inode info of directory to search
+ * @sb: Superblock of filesystem
+ * @dentry: Target dentry (name, length, etc)
+ * @flags: Behavioural flags for bufloc_t data
+ * @out_loc: Returned data for location of entry if
+ * found
+ *
+ * @return: (int): 0 if found, 1 if not found,
+ *                 otherwise an error
+ */
 static int vvsfs_find_entry_indirect(struct vvsfs_inode_info *vi,
                                      struct super_block *sb,
                                      struct dentry *dentry,
