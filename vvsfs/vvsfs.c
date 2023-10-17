@@ -105,8 +105,7 @@ static int vvsfs_file_get_block(struct inode *inode,
     struct vvsfs_inode_info *vi = VVSFS_I(inode);
     uint32_t dno, bno;
 
-    if (DEBUG)
-        printk("vvsfs - file_get_block");
+    LOG("vvsfs - file_get_block");
 
     if (iblock >= VVSFS_N_BLOCKS)
         return -EFBIG;
@@ -137,14 +136,12 @@ static int vvsfs_file_get_block(struct inode *inode,
 static int
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
 vvsfs_readpage(struct file *file, struct page *page) {
-    if (DEBUG)
-        printk("vvsfs - readpage");
+    LOG("vvsfs - readpage");
     return mpage_readpage(page, vvsfs_file_get_block);
 }
 #else
 vvsfs_read_folio(struct file *file, struct folio *folio) {
-    if (DEBUG)
-        printk("vvsfs - read folio");
+    LOG("vvsfs - read folio");
     return mpage_read_folio(folio, vvsfs_file_get_block);
 }
 #endif
@@ -152,8 +149,7 @@ vvsfs_read_folio(struct file *file, struct folio *folio) {
 // Address pace operation readpage.
 // You do not need to modify this.
 static int vvsfs_writepage(struct page *page, struct writeback_control *wbc) {
-    if (DEBUG)
-        printk("vvsfs - writepage");
+    LOG("vvsfs - writepage");
 
     return block_write_full_page(page, vvsfs_file_get_block, wbc);
 }
@@ -473,8 +469,7 @@ vvsfs_new_inode(const struct inode *dir, umode_t mode, dev_t rdev) {
     unsigned long dno, ino;
     int i;
 
-    if (DEBUG)
-        printk("vvsfs - new inode\n");
+    LOG("vvsfs - new inode\n");
 
     // get the filesystem specific info for the super block. The sbi object
     // contains the inode bitmap.
@@ -571,8 +566,7 @@ vvsfs_new_inode(const struct inode *dir, umode_t mode, dev_t rdev) {
     // in vvsfs_write_inode() (as part of the "super" operations).
     mark_inode_dirty(inode);
 
-    if (DEBUG)
-        printk("vvsfs - new_inode - done");
+    LOG("vvsfs - new_inode - done");
     return inode;
 }
 
@@ -775,8 +769,7 @@ vvsfs_create(struct mnt_idmap *namespace,
     struct buffer_head *bh;
     struct inode *inode;
 
-    if (DEBUG)
-        printk("vvsfs - create : %s\n", dentry->d_name.name);
+    LOG("vvsfs - create : %s\n", dentry->d_name.name);
 
     if (dentry->d_name.len > VVSFS_MAXNAME) {
         printk("vvsfs - create - file name too long");
@@ -825,8 +818,7 @@ static int vvsfs_link(struct dentry *old_dentry,
     int ret;
     struct inode *inode;
 
-    if (DEBUG)
-        printk("vvsfs - link : %s\n", dentry->d_name.name);
+    LOG("vvsfs - link : %s\n", dentry->d_name.name);
 
     if (dentry->d_name.len > VVSFS_MAXNAME) {
         printk("vvsfs - link - file name too long");
@@ -1706,8 +1698,7 @@ static int vvsfs_write_inode(struct inode *inode,
     uint32_t inode_block, inode_offset;
     int i;
 
-    if (DEBUG)
-        printk("vvsfs - write_inode");
+    LOG("vvsfs - write_inode");
 
     // get the vvsfs_inode_info associated with this
     // (VFS) inode from cache.
@@ -1748,8 +1739,7 @@ static int vvsfs_write_inode(struct inode *inode,
     sync_dirty_buffer(bh);
     brelse(bh);
 
-    if (DEBUG)
-        printk("vvsfs - write_inode done: %ld\n", inode->i_ino);
+    LOG("vvsfs - write_inode done: %ld\n", inode->i_ino);
     return VVSFS_BLOCKSIZE;
 }
 
@@ -1757,8 +1747,7 @@ static int vvsfs_write_inode(struct inode *inode,
 // cache, to allow us to attach filesystem specific
 // inode information. You don't need to modify this.
 int vvsfs_init_inode_cache(void) {
-    if (DEBUG)
-        printk("vvsfs - init inode cache ");
+    LOG("vvsfs - init inode cache ");
 
     vvsfs_inode_cache = kmem_cache_create(
         "vvsfs_cache", sizeof(struct vvsfs_inode_info), 0, 0, NULL);
@@ -1769,8 +1758,7 @@ int vvsfs_init_inode_cache(void) {
 
 // De-allocate the inode cache
 void vvsfs_destroy_inode_cache(void) {
-    if (DEBUG)
-        printk("vvsfs - destroy_inode_cache ");
+    LOG("vvsfs - destroy_inode_cache ");
 
     kmem_cache_destroy(vvsfs_inode_cache);
 }
@@ -1790,8 +1778,7 @@ static struct inode *vvsfs_alloc_inode(struct super_block *sb) {
     struct vvsfs_inode_info *c_inode =
         kmem_cache_alloc(vvsfs_inode_cache, GFP_KERNEL);
 
-    if (DEBUG)
-        printk("vvsfs - alloc_inode ");
+    LOG("vvsfs - alloc_inode ");
 
     if (!c_inode)
         return NULL;
@@ -1825,10 +1812,8 @@ struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino) {
     uint32_t inode_offset;
     int i;
 
-    if (DEBUG) {
-        printk("vvsfs - iget - ino : %d", (unsigned int)ino);
-        printk(" super %p\n", sb);
-    }
+    DEBUG_LOG("vvsfs - iget - ino : %d", (unsigned int)ino);
+    DEBUG_LOG(" super %p\n", sb);
 
     inode = iget_locked(sb, ino);
     if (!inode)
@@ -1905,8 +1890,7 @@ struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino) {
 static void vvsfs_put_super(struct super_block *sb) {
     struct vvsfs_sb_info *sbi = sb->s_fs_info;
 
-    if (DEBUG)
-        printk("vvsfs - put_super\n");
+    LOG("vvsfs - put_super\n");
 
     if (sbi) {
         kfree(sbi->imap);
@@ -1920,8 +1904,7 @@ static void vvsfs_put_super(struct super_block *sb) {
 // https://elixir.bootlin.com/linux/v5.15.89/source/fs/ext2/super.c#L1407
 // for various stats that you need to provide.
 static int vvsfs_statfs(struct dentry *dentry, struct kstatfs *buf) {
-    if (DEBUG)
-        printk("vvsfs - statfs\n");
+    LOG("vvsfs - statfs\n");
 
     buf->f_namelen = VVSFS_MAXNAME;
     buf->f_type = VVSFS_MAGIC;
@@ -1942,8 +1925,7 @@ static int vvsfs_fill_super(struct super_block *s, void *data, int silent) {
     uint32_t magic;
     struct vvsfs_sb_info *sbi;
 
-    if (DEBUG)
-        printk("vvsfs - fill super\n");
+    LOG("vvsfs - fill super\n");
 
     s->s_flags = ST_NOSUID | SB_NOEXEC;
     s->s_op = &vvsfs_ops;
@@ -2033,8 +2015,7 @@ static int vvsfs_fill_super(struct super_block *s, void *data, int silent) {
         return -ENOMEM;
     }
 
-    if (DEBUG)
-        printk("vvsfs - fill super done\n");
+    LOG("vvsfs - fill super done\n");
 
     return 0;
 }
@@ -2047,9 +2028,7 @@ static int vvsfs_sync_fs(struct super_block *sb, int wait) {
     struct vvsfs_sb_info *sbi = sb->s_fs_info;
     struct buffer_head *bh;
 
-    if (DEBUG) {
-        printk("vvsfs -- sync_fs");
-    }
+    LOG("vvsfs -- sync_fs");
 
     /* Write the inode map to disk */
     bh = sb_bread(sb, 1);
