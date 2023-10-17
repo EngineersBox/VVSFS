@@ -1,5 +1,6 @@
 #!/bin/bash
 source ./init.sh
+source read_dir_entry_names.sh
 log_header "Testing unlink"
 
 # Setup
@@ -40,15 +41,6 @@ assert_eq "$(stat testdir/aaa -c %h)" "1" "expected link count == 1"
 
 # Reset
 ./create.sh
-
-function readDirEntryNames() {
-    names=""
-    fnames=$(ls -fx $1 | sed "s/[ \t]\+/ /g")
-    for entry in "$fnames"; do
-        names="$names $entry"
-    done
-    names=$(echo "$names" | tr -s "[:space:]" | sed "s/^ //g")
-}
 
 dentriesPerBlock=$((VVSFS_BLOCKSIZE / VVSFS_DENTRYSIZE))
 

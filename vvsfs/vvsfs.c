@@ -52,8 +52,9 @@
 #define READ_BLOCK_OFF(sb, offset)                                             \
     sb_bread((sb), vvsfs_get_data_block((offset)))
 #define READ_BLOCK(sb, vi, index) READ_BLOCK_OFF(sb, (vi)->i_data[(index)])
-#define READ_DENTRY(bh, offset)                                                \
-    ((struct vvsfs_dir_entry *)((bh)->b_data + (offset)*VVSFS_DENTRYSIZE))
+#define READ_DENTRY_OFF(data, offset) \
+    ((struct vvsfs_dir_entry *)((data) + (offset) * VVSFS_DENTRYSIZE))
+#define READ_DENTRY(bh, offset) READ_DENTRY_OFF((bh)->b_data, offset)
 #define VVSFS_LAST_DIRECT_BLOCK_INDEX (VVSFS_N_BLOCKS - 1)
 #define READ_INDIRECT_BLOCK(sb, indirect_bh, i)                                \
     READ_BLOCK_OFF(                                                            \
@@ -229,13 +230,13 @@ static struct address_space_operations vvsfs_as_operations = {
  */
 static int vvsfs_read_dentries_direct(struct vvsfs_inode_info *vi,
                                       struct super_block *sb,
-                                      bytearray_t data,
-                                      uint32_t db_count) {
+                                      bytearray_t data) {
     struct buffer_head *bh;
     int i;
+    uint32_t db_count;
     DEBUG_LOG("vvsfs - read_dentries_direct\n");
     // Ensure that we do not read the last block which is an indirection pointer
-    db_count = min((uint32_t)VVSFS_N_BLOCKS - 2, vi->i_db_count);
+    db_count = min((uint32_t)VVSFS_N_BLOCKS, vi->i_db_count);
     DEBUG_LOG("vvsfs - read_dentires_direct - reading %u data blocks\n",
               db_count);
     for (i = 0; i < db_count; ++i) {
@@ -268,20 +269,20 @@ static int vvsfs_read_dentries_direct(struct vvsfs_inode_info *vi,
  */
 static int vvsfs_read_dentries_indirect(struct vvsfs_inode_info *vi,
                                         struct super_block *sb,
-                                        bytearray_t data,
-                                        uint32_t db_count) {
+                                        bytearray_t data) {
     struct buffer_head *i_bh;
     struct buffer_head *bh;
     int i;
+    uint32_t db_count;
     uint32_t offset;
     DEBUG_LOG("vvsfs - read_dentries_indirect\n");
-    i_bh = READ_BLOCK(sb, vi, VVSFS_N_BLOCKS - 1);
+    i_bh = READ_BLOCK(sb, vi, VVSFS_LAST_DIRECT_BLOCK_INDEX);
     if (!i_bh) {
         // Buffer read failed, no more data when we expected some
         DEBUG_LOG("vvsfs - read_dentries_indirect - failed buffer read\n");
         return -EIO;
     }
-    db_count = vi->i_db_count - db_count;
+    db_count = vi->i_db_count - VVSFS_LAST_DIRECT_BLOCK_INDEX;
     DEBUG_LOG("vvsfs - read_dentries_indirect - reading %u data blocks\n",
               db_count);
     for (i = 0; i < db_count; ++i) {
@@ -321,7 +322,6 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
     struct vvsfs_inode_info *vi;
     struct super_block *sb;
     int err;
-    uint32_t db_count;
     bytearray_t data;
     DEBUG_LOG("vvsfs - read_dentries\n");
     // Retrieve vvsfs specific inode data from dir inode
@@ -338,12 +338,12 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
     if (!data) {
         return ERR_PTR(-ENOMEM);
     }
-    if ((err = vvsfs_read_dentries_direct(vi, sb, data, db_count))) {
+    if ((err = vvsfs_read_dentries_direct(vi, sb, data))) {
         kfree(data);
         return ERR_PTR(err);
     }
     if (vi->i_data[VVSFS_LAST_DIRECT_BLOCK_INDEX] &&
-        (err = vvsfs_read_dentries_indirect(vi, sb, data, db_count))) {
+        (err = vvsfs_read_dentries_indirect(vi, sb, data))) {
         kfree(data);
         return ERR_PTR(err);
     }
@@ -373,7 +373,7 @@ static int vvsfs_readdir(struct file *filp, struct dir_context *ctx) {
     for (i = ctx->pos / VVSFS_DENTRYSIZE;
          i < num_dirs && filp->f_pos < dir->i_size;
          ++i) {
-        dentry = (struct vvsfs_dir_entry *)(data + i * VVSFS_DENTRYSIZE);
+        dentry = READ_DENTRY_OFF(data, i);
         DEBUG_LOG("vvsfs - readdir - emitting dentry %d: %p\n", i, dentry);
         if (!(err = dir_emit(ctx,
                              dentry->name,
@@ -381,7 +381,8 @@ static int vvsfs_readdir(struct file *filp, struct dir_context *ctx) {
                              dentry->inode_number,
                              DT_UNKNOWN))) {
             DEBUG_LOG("vvsfs - readdir - failed dir_emit: %d\n", err);
-            break;
+            kfree(data);
+            return -ENOENT;
         }
         ctx->pos += VVSFS_DENTRYSIZE;
     }
@@ -434,7 +435,7 @@ vvsfs_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags) {
         return ERR_PTR(err);
     }
     for (i = 0; i < num_dirs; ++i) {
-        dent = (struct vvsfs_dir_entry *)(data + i * VVSFS_DENTRYSIZE);
+        dent = READ_DENTRY_OFF(data, i);
         if (namecmp(dent->name, target_name, target_name_len)) {
             inode = vvsfs_iget(dir->i_sb, dent->inode_number);
             if (!inode) {
@@ -594,7 +595,7 @@ static int vvsfs_assign_data_block(struct vvsfs_inode_info *dir_info,
     }
     DEBUG_LOG("vvsfs - assign-data_block - current block count: %u\n",
               dir_info->i_db_count);
-    if (dir_info->i_db_count < VVSFS_LAST_DIRECT_BLOCK_INDEX) {
+    if (d_pos < VVSFS_LAST_DIRECT_BLOCK_INDEX) {
         DEBUG_LOG("vvsfs - assign_data_block - direct blocks free, allocating "
                   "direct");
         // Still have room in direct blocks, assign
@@ -612,11 +613,11 @@ static int vvsfs_assign_data_block(struct vvsfs_inode_info *dir_info,
         return -EIO;
     }
     dir_info->i_db_count++;
-    offset = (dir_info->i_db_count - VVSFS_LAST_DIRECT_BLOCK_INDEX) *
+    offset = (d_pos - VVSFS_LAST_DIRECT_BLOCK_INDEX) *
              VVSFS_INDIRECT_PTR_SIZE;
-    DEBUG_LOG("vvsfs - assign_data_block - indirect block offset: %d\n",
-              offset);
-    memset(bh->b_data + offset, (int)newblock, VVSFS_INDIRECT_PTR_SIZE);
+    DEBUG_LOG("vvsfs - assign_data_block - indirect block offset: %d <- %u\n",
+              offset, newblock);
+    *(bh->b_data + offset) = newblock;
     mark_buffer_dirty(bh);
     sync_dirty_buffer(bh);
     brelse(bh);
@@ -639,8 +640,10 @@ static int vvsfs_index_data_block(struct vvsfs_inode_info *vi,
                                   struct super_block *sb,
                                   uint32_t d_pos) {
     struct buffer_head *bh;
-    uint32_t offset;
+    int offset;
+    uint32_t index;
     DEBUG_LOG("vvsfs - index_data_block\n");
+    DEBUG_LOG("vvsfs - index_data_block - d_pos: %u\n", d_pos);
     if (d_pos < VVSFS_LAST_DIRECT_BLOCK_INDEX) {
         DEBUG_LOG("vvsfs - index_data_block - direct done\n");
         return vi->i_data[d_pos];
@@ -650,11 +653,12 @@ static int vvsfs_index_data_block(struct vvsfs_inode_info *vi,
         DEBUG_LOG("vvsfs - index_data_block - failed to read buffer data\n");
         return -EIO;
     }
-    offset = d_pos - VVSFS_LAST_DIRECT_BLOCK_INDEX;
-    offset = (int)*(bh->b_data + offset);
+    offset = (d_pos - VVSFS_LAST_DIRECT_BLOCK_INDEX) * VVSFS_INDIRECT_PTR_SIZE;
+    DEBUG_LOG("vvsfs - index_data_block - offset: %u\n", offset);
+    index = (uint32_t)*(bh->b_data + offset);
     brelse(bh);
-    DEBUG_LOG("vvsfs - index_data_block - indirect done\n");
-    return offset;
+    DEBUG_LOG("vvsfs - index_data_block - indirect done: %u -> %d\n", offset, index);
+    return index;
 }
 
 // This is a helper function for the "create"
@@ -703,14 +707,14 @@ static int vvsfs_add_new_entry(struct inode *dir,
             return newblock;
         }
         dno = (uint32_t)newblock;
+    } else {
+        if ((raw_dno = vvsfs_index_data_block(dir_info, sb, d_pos)) < 0) {
+            DEBUG_LOG("vvsfs - add_new_entry - failed get data block index %d\n", raw_dno);
+            return raw_dno;
+        }
+        dno = (uint32_t)raw_dno;
     }
-
     /* Update the on-disk structure */
-    if ((raw_dno = vvsfs_index_data_block(dir_info, sb, d_pos)) < 0) {
-        DEBUG_LOG("vvsfs - add_new_entry - failed get data block index\n");
-        return raw_dno;
-    }
-    dno = (uint32_t)raw_dno;
     printk("vvsfs - add_new_entry - reading dno: %d, "
            "d_pos: %d, block: %d",
            dno,
@@ -740,7 +744,7 @@ static int vvsfs_add_new_entry(struct inode *dir,
               "block %d",
               dent->name,
               dent->inode_number,
-              vvsfs_get_data_block(dir_info->i_data[d_pos]));
+              vvsfs_get_data_block(dno));
 
     dir->i_size = (num_dirs + 1) * VVSFS_DENTRYSIZE;
     dir->i_blocks = dir_info->i_db_count * (VVSFS_BLOCKSIZE / VVSFS_SECTORSIZE);
