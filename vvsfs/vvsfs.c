@@ -49,6 +49,35 @@
 #define DEBUG_LOG(msg, ...) ({})
 #endif
 
+           /* Write an unsigned 32-bit integer to a buffer
+ *
+ * @buf: Byte buffer pointer at the position to
+ *       write, aquired from a struct buffer_head
+ * @data: Integer to write to buffer
+ */
+static void write_int_to_buffer(char* buf, uint32_t data) {
+    buf[0] = (data >> 24) & 0xFF;
+    buf[1] = (data >> 16) & 0xFF;
+    buf[2] = (data >> 8) & 0xFF;
+    buf[3] = data & 0xFF;
+}
+
+/* Read an unsigned 32-bit integer from a buffer
+ *
+ * @buf: Byte buffer pointer at the position to read
+ *       from, aquired from a struct buffer_head
+ *
+ * @return: (uint32_t) read integer value
+ */
+static uint32_t read_int_from_buffer(char* buf) {
+    uint32_t data = 0;
+    data |= (buf[0] << 24) & 0xff;
+    data |= (buf[1] << 16) & 0xFF;
+    data |= (buf[2] << 8) & 0xFF;
+    data |= buf[3] & 0xFF;
+    return data;
+}
+
 #define READ_BLOCK_OFF(sb, offset)                                             \
     sb_bread((sb), vvsfs_get_data_block((offset)))
 #define READ_BLOCK(sb, vi, index) READ_BLOCK_OFF(sb, (vi)->i_data[(index)])
@@ -59,7 +88,7 @@
 #define READ_INDIRECT_BLOCK(sb, indirect_bh, i)                                \
     READ_BLOCK_OFF(                                                            \
         sb,                                                                    \
-        (uint32_t)(*((indirect_bh)->b_data + ((i)*VVSFS_INDIRECT_PTR_SIZE))))
+        read_int_from_buffer((indirect_bh)->b_data + ((i)*VVSFS_INDIRECT_PTR_SIZE)))
 
 // Avoid using char* as a byte array since some systems may have a 16 bit char
 // type this ensures that any system that has 8 bits = 1 byte will be valid for
@@ -236,7 +265,7 @@ static int vvsfs_read_dentries_direct(struct vvsfs_inode_info *vi,
     uint32_t db_count;
     DEBUG_LOG("vvsfs - read_dentries_direct\n");
     // Ensure that we do not read the last block which is an indirection pointer
-    db_count = min((uint32_t)VVSFS_N_BLOCKS, vi->i_db_count);
+    db_count = min((uint32_t)VVSFS_LAST_DIRECT_BLOCK_INDEX, vi->i_db_count);
     DEBUG_LOG("vvsfs - read_dentires_direct - reading %u data blocks\n",
               db_count);
     for (i = 0; i < db_count; ++i) {
@@ -286,11 +315,11 @@ static int vvsfs_read_dentries_indirect(struct vvsfs_inode_info *vi,
     DEBUG_LOG("vvsfs - read_dentries_indirect - reading %u data blocks\n",
               db_count);
     for (i = 0; i < db_count; ++i) {
-        offset = (uint32_t)(*(i_bh->b_data + (i * VVSFS_INDIRECT_PTR_SIZE)));
+        offset = read_int_from_buffer(i_bh->b_data + (i * VVSFS_INDIRECT_PTR_SIZE));
         printk(
-            "vvsfs - read_entries_indirect - reading dno: %d, disk block: %d",
-            vi->i_data[i],
-            vvsfs_get_data_block(vi->i_data[i]));
+            "vvsfs - read_entries_indirect - reading dno: %d, disk block: %u",
+            offset,
+            vvsfs_get_data_block(offset));
         bh = READ_BLOCK_OFF(sb, offset);
         if (!bh) {
             // Buffer read failed, no more data when we expected some
@@ -306,6 +335,8 @@ static int vvsfs_read_dentries_indirect(struct vvsfs_inode_info *vi,
     DEBUG_LOG("vvsfs - read_dentries_indirect - done\n");
     return 0;
 }
+
+#define VVSFS_BUFFER_INDIRECT_OFFSET (VVSFS_LAST_DIRECT_BLOCK_INDEX * VVSFS_BLOCKSIZE)
 
 // vvsfs_read_dentries - reads all dentries into memory for a given inode
 //
@@ -343,7 +374,7 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
         return ERR_PTR(err);
     }
     if (vi->i_db_count >= VVSFS_N_BLOCKS &&
-        (err = vvsfs_read_dentries_indirect(vi, sb, data))) {
+        (err = vvsfs_read_dentries_indirect(vi, sb, data + VVSFS_BUFFER_INDIRECT_OFFSET))) {
         kfree(data);
         return ERR_PTR(err);
     }
@@ -571,35 +602,6 @@ vvsfs_new_inode(const struct inode *dir, umode_t mode, dev_t rdev) {
     return inode;
 }
 
-/* Write an unsigned 32-bit integer to a buffer
- *
- * @buf: Byte buffer pointer at the position to
- *       write, aquired from a struct buffer_head
- * @data: Integer to write to buffer
- */
-static void write_int_to_buffer(char* buf, uint32_t data) {
-    buf[0] = (data >> 24) & 0xFF;
-    buf[1] = (data >> 16) & 0xFF;
-    buf[2] = (data >> 8) & 0xFF;
-    buf[3] = data & 0xFF;
-}
-
-/* Read an unsigned 32-bit integer from a buffer
- *
- * @buf: Byte buffer pointer at the position to read
- *       from, aquired from a struct buffer_head
- *
- * @return: (uint32_t) read integer value
- */
-static uint32_t read_int_from_buffer(char* buf) {
-    uint32_t data = 0;
-    data |= (buf[0] << 24) & 0xff;
-    data |= (buf[1] << 16) & 0xFF;
-    data |= (buf[2] << 8) & 0xFF;
-    data |= buf[3] & 0xFF;
-    return data;
-}
-
 /* Given a position into the target inode data blocks,
  * create and assign a new data block.
  *
@@ -648,7 +650,6 @@ static int vvsfs_assign_data_block(struct vvsfs_inode_info *dir_info,
               offset, newblock);
 
     write_int_to_buffer(bh->b_data + offset, newblock);
-    DEBUG_LOG("vvsfs - assign_data_block - written: %u\n", (uint32_t)*(bh->b_data + offset));
     mark_buffer_dirty(bh);
     sync_dirty_buffer(bh);
     brelse(bh);
@@ -1340,6 +1341,7 @@ static int vvsfs_dealloc_data_block(struct inode *inode, int block_index) {
     struct vvsfs_sb_info *sb_info;
     size_t count;
     DEBUG_LOG("vvsfs - dealloc_data_block\n");
+    // TODO: Refactor this to method support indirect blocks
     if (block_index < 0 || block_index >= VVSFS_N_BLOCKS) {
         DEBUG_LOG("vvsfs - dealloc_data_block - "
                   "block_index (%d) out of range "
@@ -1358,9 +1360,6 @@ static int vvsfs_dealloc_data_block(struct inode *inode, int block_index) {
     vvsfs_free_data_block(sb_info->dmap, vi->i_data[block_index]);
     // Move all subsequent blocks back to fill the
     // holes
-    DEBUG_LOG("vvsfs - dealloc_data_block - "
-              "i_db_count before: %d\n",
-              vi->i_db_count);
     count = (--vi->i_db_count) - block_index;
     DEBUG_LOG("vvsfs - dealloc_data_block - "
               "i_db_count after: %d\n",
@@ -1368,12 +1367,6 @@ static int vvsfs_dealloc_data_block(struct inode *inode, int block_index) {
     memmove(&vi->i_data[block_index],
             &vi->i_data[block_index + 1],
             count * sizeof(uint32_t));
-    // Ensure the last block is not set (avoids duplication of last element from
-    // shift back)
-    memmove(&vi->i_data[block_index], &vi->i_data[block_index + 1], count);
-    // Ensure the last block is not set (avoids duplication of last element from
-    // shift back)
-    memmove(&vi->i_data[block_index], &vi->i_data[block_index + 1], count);
     // Ensure the last block is not set (avoids
     // duplication of last element from shift back)
     vi->i_data[VVSFS_N_BLOCKS - 1] = 0;
