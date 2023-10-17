@@ -1,10 +1,8 @@
-#!/usr/bin/bash
+#!/bin/bash
 
-source ./assert.sh
+source ./init.sh
 
 log_header "Testing rmdir"
-
-./create.sh
 
 # Setup
 mkdir testdir/dir1
@@ -24,8 +22,7 @@ assert_eq "0" "$(find testdir -type d -name dir3 | wc -l)" "expected dir3 to not
 assert_eq "0" "$(find testdir -type d -name dir2 | wc -l)" "expected dir2 to not exist"
 assert_eq "0" "$(find testdir -type f -name file1 | wc -l)" "expected file1 to not exist"
 
-./umount.sh
-./mount.sh
+./remount.sh
 
 # Can remove nested file and then directory
 rm testdir/dir4/file2

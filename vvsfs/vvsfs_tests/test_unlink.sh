@@ -1,11 +1,6 @@
-#!/usr/bin/bash
-
-source ./assert.sh
-source ./vvsfs_env.sh
-
-log_header "Testing Unlink"
-
-./create.sh
+#!/bin/bash
+source ./init.sh
+log_header "Testing unlink"
 
 # Setup
 content="ABCDEFG"
@@ -16,8 +11,7 @@ ln testdir/ccc testdir/ddd
 echo "$content" > testdir/bbb
 touch testdir/other.txt
 
-./umount.sh
-./mount.sh
+./remount.sh
 
 # ==== CORE BEHAVIOUR ====
 
@@ -32,8 +26,7 @@ rm testdir/ddd
 assert_eq "$(stat testdir/aaa -c %h)" "3" "expected link count == 3"
 assert_eq "$(stat -c %s testdir)" "384" "expected total size == 384"
 
-./umount.sh
-./mount.sh
+./remount.sh
 
 # Ensure persistence to disk through umount/mount
 assert_eq "$(find testdir -type f | wc -l)" "3" "expected 3 files"

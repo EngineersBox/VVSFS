@@ -1,15 +1,12 @@
-source ./assert.sh
-
+#!/bin/bash
+source ./init.sh
 log_header "Testing basic"
-
-./create.sh
 
 touch testdir/a
 echo "AAA" > testdir/as
 good_ls=$(ls testdir)
 
-./umount.sh
-./mount.sh
+./remount.sh
 
 after_remount=$(ls testdir)
 assert_eq "$good_ls" "$after_remount" "expected ls to stay the same"

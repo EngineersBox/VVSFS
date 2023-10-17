@@ -1,8 +1,6 @@
-source ./assert.sh
-
+#!/bin/bash
+source ./init.sh
 log_header "Testing link create"
-
-./create.sh
 
 content="ABCDEFG"
 
@@ -12,8 +10,7 @@ ln testdir/aaa testdir/ccc
 ln testdir/ccc testdir/ddd
 echo "$content" > testdir/bbb
 
-./umount.sh
-./mount.sh
+./remount.sh
 
 assert_eq "$content" "$(cat testdir/aaa)" "expected correct content"
 assert_eq "$content" "$(cat testdir/bbb)" "expected correct content"
