@@ -58,3 +58,4 @@ c_cpp_properties.json
 mkfs.vvsfs
 *.img
 test*/
+vvsfs_env.sh

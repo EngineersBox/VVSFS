@@ -25,10 +25,14 @@ DEFINES_NAMES=$(
 
 EXPANSION_CODE=$(
     echo "$DEFINES_NAMES" \
-        | awk '{print "EXPAND(\""$0"\","$0");"}'
+    | awk '{print "EXPAND(\""$0"\","$0");"}'
 )
 
-EXPANSION_CODE=$(cat <<EOF
+# Note the use of "|| true" here, since "read"
+# returns an exit code of 1, we need to ensure
+# that it doesnt trigger any wrapping scripts
+# with "set -e"
+read -r -d '' EXPANSION_CODE <<-EOF || true
 #include "$VVSFS_HEADER"
 #include <stdio.h>
 #define format_specifier(x) _Generic((x), \
@@ -57,13 +61,15 @@ EXPANSION_CODE=$(cat <<EOF
 int main() {
 $EXPANSION_CODE
 }
-EOF)
-echo "$EXPANSION_CODE" | gcc -o expand -xc -
-chmod a+x expand
+EOF
+
+TMP=$(mktemp)
+echo "$EXPANSION_CODE" | gcc -o $TMP -xc -
+chmod a+x $TMP
 echo "#!/bin/bash" > $ENV_FILE_NAME
-./expand >> $ENV_FILE_NAME
+$TMP >> $ENV_FILE_NAME
 chmod a+x $ENV_FILE_NAME
-rm expand
+rm $TMP
 
 source $ENV_FILE_NAME
 
