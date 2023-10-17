@@ -571,6 +571,35 @@ vvsfs_new_inode(const struct inode *dir, umode_t mode, dev_t rdev) {
     return inode;
 }
 
+/* Write an unsigned 32-bit integer to a buffer
+ *
+ * @buf: Byte buffer pointer at the position to
+ *       write, aquired from a struct buffer_head
+ * @data: Integer to write to buffer
+ */
+static void write_int_to_buffer(char* buf, uint32_t data) {
+    buf[0] = (data >> 24) & 0xFF;
+    buf[1] = (data >> 16) & 0xFF;
+    buf[2] = (data >> 8) & 0xFF;
+    buf[3] = data & 0xFF;
+}
+
+/* Read an unsigned 32-bit integer from a buffer
+ *
+ * @buf: Byte buffer pointer at the position to read
+ *       from, aquired from a struct buffer_head
+ *
+ * @return: (uint32_t) read integer value
+ */
+static uint32_t read_int_from_buffer(char* buf) {
+    uint32_t data = 0;
+    data |= (buf[0] << 24) & 0xff;
+    data |= (buf[1] << 16) & 0xFF;
+    data |= (buf[2] << 8) & 0xFF;
+    data |= buf[3] & 0xFF;
+    return data;
+}
+
 /* Given a position into the target inode data blocks,
  * create and assign a new data block.
  *
@@ -617,7 +646,9 @@ static int vvsfs_assign_data_block(struct vvsfs_inode_info *dir_info,
              VVSFS_INDIRECT_PTR_SIZE;
     DEBUG_LOG("vvsfs - assign_data_block - indirect block offset: %d <- %u\n",
               offset, newblock);
-    *(bh->b_data + offset) = newblock;
+
+    write_int_to_buffer(bh->b_data + offset, newblock);
+    DEBUG_LOG("vvsfs - assign_data_block - written: %u\n", (uint32_t)*(bh->b_data + offset));
     mark_buffer_dirty(bh);
     sync_dirty_buffer(bh);
     brelse(bh);
@@ -655,7 +686,7 @@ static int vvsfs_index_data_block(struct vvsfs_inode_info *vi,
     }
     offset = (d_pos - VVSFS_LAST_DIRECT_BLOCK_INDEX) * VVSFS_INDIRECT_PTR_SIZE;
     DEBUG_LOG("vvsfs - index_data_block - offset: %u\n", offset);
-    index = (uint32_t)*(bh->b_data + offset);
+    index = read_int_from_buffer(bh->b_data + offset);
     brelse(bh);
     DEBUG_LOG("vvsfs - index_data_block - indirect done: %u -> %d\n", offset, index);
     return index;
