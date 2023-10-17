@@ -342,7 +342,7 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
         kfree(data);
         return ERR_PTR(err);
     }
-    if (vi->i_data[VVSFS_LAST_DIRECT_BLOCK_INDEX] &&
+    if (vi->i_db_count >= VVSFS_N_BLOCKS &&
         (err = vvsfs_read_dentries_indirect(vi, sb, data))) {
         kfree(data);
         return ERR_PTR(err);
