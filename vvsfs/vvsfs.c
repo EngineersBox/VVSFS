@@ -49,13 +49,13 @@
 #define DEBUG_LOG(msg, ...) ({})
 #endif
 
-           /* Write an unsigned 32-bit integer to a buffer
+/* Write an unsigned 32-bit integer to a buffer
  *
  * @buf: Byte buffer pointer at the position to
  *       write, aquired from a struct buffer_head
  * @data: Integer to write to buffer
  */
-static void write_int_to_buffer(char* buf, uint32_t data) {
+static void write_int_to_buffer(char *buf, uint32_t data) {
     buf[0] = (data >> 24) & 0xFF;
     buf[1] = (data >> 16) & 0xFF;
     buf[2] = (data >> 8) & 0xFF;
@@ -69,7 +69,7 @@ static void write_int_to_buffer(char* buf, uint32_t data) {
  *
  * @return: (uint32_t) read integer value
  */
-static uint32_t read_int_from_buffer(char* buf) {
+static uint32_t read_int_from_buffer(char *buf) {
     uint32_t data = 0;
     data |= (buf[0] << 24) & 0xff;
     data |= (buf[1] << 16) & 0xFF;
@@ -81,14 +81,14 @@ static uint32_t read_int_from_buffer(char* buf) {
 #define READ_BLOCK_OFF(sb, offset)                                             \
     sb_bread((sb), vvsfs_get_data_block((offset)))
 #define READ_BLOCK(sb, vi, index) READ_BLOCK_OFF(sb, (vi)->i_data[(index)])
-#define READ_DENTRY_OFF(data, offset) \
-    ((struct vvsfs_dir_entry *)((data) + (offset) * VVSFS_DENTRYSIZE))
+#define READ_DENTRY_OFF(data, offset)                                          \
+    ((struct vvsfs_dir_entry *)((data) + (offset)*VVSFS_DENTRYSIZE))
 #define READ_DENTRY(bh, offset) READ_DENTRY_OFF((bh)->b_data, offset)
 #define VVSFS_LAST_DIRECT_BLOCK_INDEX (VVSFS_N_BLOCKS - 1)
 #define READ_INDIRECT_BLOCK(sb, indirect_bh, i)                                \
-    READ_BLOCK_OFF(                                                            \
-        sb,                                                                    \
-        read_int_from_buffer((indirect_bh)->b_data + ((i)*VVSFS_INDIRECT_PTR_SIZE)))
+    READ_BLOCK_OFF(sb,                                                         \
+                   read_int_from_buffer((indirect_bh)->b_data +                \
+                                        ((i)*VVSFS_INDIRECT_PTR_SIZE)))
 
 // Avoid using char* as a byte array since some systems may have a 16 bit char
 // type this ensures that any system that has 8 bits = 1 byte will be valid for
@@ -112,6 +112,98 @@ static struct inode_operations vvsfs_symlink_inode_operations = {
 
 struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino);
 
+/* Calculate the data block map index for a given position
+ * within the given inode data blocks.
+ *
+ * @vi: Inode information of the target inode
+ * @sb: Superblock of the filesytsem
+ * @d_pos: Position of the data block within the inode
+ *
+ * @return: (int): 0 or greater if data block exists in
+ *                 inode, error otherwise
+ */
+static int vvsfs_index_data_block(struct vvsfs_inode_info *vi,
+                                  struct super_block *sb,
+                                  uint32_t d_pos) {
+    struct buffer_head *bh;
+    int offset;
+    uint32_t index;
+    DEBUG_LOG("vvsfs - index_data_block\n");
+    DEBUG_LOG("vvsfs - index_data_block - d_pos: %u\n", d_pos);
+    if (d_pos < VVSFS_LAST_DIRECT_BLOCK_INDEX) {
+        DEBUG_LOG("vvsfs - index_data_block - direct done\n");
+        return vi->i_data[d_pos];
+    }
+    bh = READ_BLOCK(sb, vi, VVSFS_LAST_DIRECT_BLOCK_INDEX);
+    if (!bh) {
+        DEBUG_LOG("vvsfs - index_data_block - failed to read buffer data\n");
+        return -EIO;
+    }
+    offset = (d_pos - VVSFS_LAST_DIRECT_BLOCK_INDEX) * VVSFS_INDIRECT_PTR_SIZE;
+    DEBUG_LOG("vvsfs - index_data_block - offset: %u\n", offset);
+    index = read_int_from_buffer(bh->b_data + offset);
+    brelse(bh);
+    DEBUG_LOG(
+        "vvsfs - index_data_block - indirect done: %u -> %d\n", offset, index);
+    return index;
+}
+
+/* Given a position into the target inode data blocks,
+ * create and assign a new data block.
+ *
+ * @dir_info: Inode information of target inode
+ * @sb: Superblock of the filesystem
+ * @d_pos: Data block position to create at
+ *
+ * @return: (int) 0 or greater, data block map index,
+ *                error otherwise
+ */
+static int vvsfs_assign_data_block(struct vvsfs_inode_info *dir_info,
+                                   struct super_block *sb,
+                                   uint32_t d_pos) {
+    struct buffer_head *bh;
+    struct vvsfs_sb_info *sbi = sb->s_fs_info;
+    int offset;
+    uint32_t newblock;
+    DEBUG_LOG("vvsfs - assign_data_block\n");
+    newblock = vvsfs_reserve_data_block(sbi->dmap);
+    if (!newblock) {
+        return -ENOSPC;
+    }
+    DEBUG_LOG("vvsfs - assign-data_block - current block count: %u\n",
+              dir_info->i_db_count);
+    if (d_pos < VVSFS_LAST_DIRECT_BLOCK_INDEX) {
+        DEBUG_LOG("vvsfs - assign_data_block - direct blocks free, allocating "
+                  "direct");
+        // Still have room in direct blocks, assign
+        // there
+        dir_info->i_data[d_pos] = newblock;
+        dir_info->i_db_count++;
+        goto done;
+    }
+    DEBUG_LOG("vvsfs - assign_data_block - no direct blocks free, allocating "
+              "indirect\n");
+    bh = READ_BLOCK(sb, dir_info, VVSFS_LAST_DIRECT_BLOCK_INDEX);
+    if (!bh) {
+        DEBUG_LOG("vvsfs - assign_data_block - buffer read failed\n");
+        vvsfs_free_data_block(sbi->dmap, newblock);
+        return -EIO;
+    }
+    dir_info->i_db_count++;
+    offset = (d_pos - VVSFS_LAST_DIRECT_BLOCK_INDEX) * VVSFS_INDIRECT_PTR_SIZE;
+    DEBUG_LOG("vvsfs - assign_data_block - indirect block offset: %d <- %u\n",
+              offset,
+              newblock);
+
+    write_int_to_buffer(bh->b_data + offset, newblock);
+    mark_buffer_dirty(bh);
+    sync_dirty_buffer(bh);
+    brelse(bh);
+done:
+    DEBUG_LOG("vvsfs - assign_data_block - done\n");
+    return newblock;
+}
+
 // vvsfs_file_get_block
 // @inode: inode of the file
 // @iblock: the block number (relative to the beginning of the file) to be read.
@@ -133,31 +225,34 @@ static int vvsfs_file_get_block(struct inode *inode,
     struct super_block *sb = inode->i_sb;
     struct vvsfs_sb_info *sbi = sb->s_fs_info;
     struct vvsfs_inode_info *vi = VVSFS_I(inode);
+    int raw_dno;
     uint32_t dno, bno;
-
     LOG("vvsfs - file_get_block");
-
-    if (iblock >= VVSFS_N_BLOCKS)
+    if (iblock >= VVSFS_MAX_INODE_BLOCKS) {
+        DEBUG_LOG("vvsfs - file_get_block - block index exceeds maximum supported: %u >= %d\n", (uint32_t)iblock, (int)VVSFS_MAX_INODE_BLOCKS);
         return -EFBIG;
-
-    if (iblock > vi->i_db_count)
+    }
+    if (iblock > vi->i_db_count) {
         return 0;
-
+    }
     if (iblock == vi->i_db_count) {
-        if (!create)
+        if (!create) {
             return 0;
-        dno = vvsfs_reserve_data_block(sbi->dmap);
-        if (dno == 0)
-            return -ENOSPC;
-        vi->i_data[iblock] = dno;
-        vi->i_db_count++;
+        }
+        raw_dno = vvsfs_assign_data_block(vi, sb, (uint32_t)iblock);
+        if (raw_dno < 0) {
+            DEBUG_LOG("vvsfs - file_get_block - failed to assign data block\n");
+            return raw_dno;
+        }
+        dno = (uint32_t) raw_dno;
         inode->i_blocks = vi->i_db_count * VVSFS_BLOCKSIZE / VVSFS_SECTORSIZE;
         bno = vvsfs_get_data_block(dno);
     } else {
-        bno = vvsfs_get_data_block(vi->i_data[iblock]);
+        bno = vvsfs_get_data_block(
+            vvsfs_index_data_block(vi, sb, (uint32_t)iblock));
     }
-
     map_bh(bh, sb, bno);
+    LOG("vvsfs - file_get_block - done\n");
     return 0;
 }
 
@@ -315,7 +410,8 @@ static int vvsfs_read_dentries_indirect(struct vvsfs_inode_info *vi,
     DEBUG_LOG("vvsfs - read_dentries_indirect - reading %u data blocks\n",
               db_count);
     for (i = 0; i < db_count; ++i) {
-        offset = read_int_from_buffer(i_bh->b_data + (i * VVSFS_INDIRECT_PTR_SIZE));
+        offset =
+            read_int_from_buffer(i_bh->b_data + (i * VVSFS_INDIRECT_PTR_SIZE));
         printk(
             "vvsfs - read_entries_indirect - reading dno: %d, disk block: %u",
             offset,
@@ -336,7 +432,8 @@ static int vvsfs_read_dentries_indirect(struct vvsfs_inode_info *vi,
     return 0;
 }
 
-#define VVSFS_BUFFER_INDIRECT_OFFSET (VVSFS_LAST_DIRECT_BLOCK_INDEX * VVSFS_BLOCKSIZE)
+#define VVSFS_BUFFER_INDIRECT_OFFSET                                           \
+    (VVSFS_LAST_DIRECT_BLOCK_INDEX * VVSFS_BLOCKSIZE)
 
 // vvsfs_read_dentries - reads all dentries into memory for a given inode
 //
@@ -374,7 +471,8 @@ static bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs) {
         return ERR_PTR(err);
     }
     if (vi->i_db_count >= VVSFS_N_BLOCKS &&
-        (err = vvsfs_read_dentries_indirect(vi, sb, data + VVSFS_BUFFER_INDIRECT_OFFSET))) {
+        (err = vvsfs_read_dentries_indirect(
+             vi, sb, data + VVSFS_BUFFER_INDIRECT_OFFSET))) {
         kfree(data);
         return ERR_PTR(err);
     }
@@ -602,97 +700,6 @@ vvsfs_new_inode(const struct inode *dir, umode_t mode, dev_t rdev) {
     return inode;
 }
 
-/* Given a position into the target inode data blocks,
- * create and assign a new data block.
- *
- * @dir_info: Inode information of target inode
- * @sb: Superblock of the filesystem
- * @d_pos: Data block position to create at
- *
- * @return: (int) 0 or greater, data block map index,
- *                error otherwise
- */
-static int vvsfs_assign_data_block(struct vvsfs_inode_info *dir_info,
-                                   struct super_block *sb,
-                                   uint32_t d_pos) {
-    struct buffer_head *bh;
-    struct vvsfs_sb_info *sbi = sb->s_fs_info;
-    int offset;
-    uint32_t newblock;
-    DEBUG_LOG("vvsfs - assign_data_block\n");
-    newblock = vvsfs_reserve_data_block(sbi->dmap);
-    if (!newblock) {
-        return -ENOSPC;
-    }
-    DEBUG_LOG("vvsfs - assign-data_block - current block count: %u\n",
-              dir_info->i_db_count);
-    if (d_pos < VVSFS_LAST_DIRECT_BLOCK_INDEX) {
-        DEBUG_LOG("vvsfs - assign_data_block - direct blocks free, allocating "
-                  "direct");
-        // Still have room in direct blocks, assign
-        // there
-        dir_info->i_data[d_pos] = newblock;
-        dir_info->i_db_count++;
-        goto done;
-    }
-    DEBUG_LOG("vvsfs - assign_data_block - no direct blocks free, allocating "
-              "indirect\n");
-    bh = READ_BLOCK(sb, dir_info, VVSFS_LAST_DIRECT_BLOCK_INDEX);
-    if (!bh) {
-        DEBUG_LOG("vvsfs - assign_data_block - buffer read failed\n");
-        vvsfs_free_data_block(sbi->dmap, newblock);
-        return -EIO;
-    }
-    dir_info->i_db_count++;
-    offset = (d_pos - VVSFS_LAST_DIRECT_BLOCK_INDEX) *
-             VVSFS_INDIRECT_PTR_SIZE;
-    DEBUG_LOG("vvsfs - assign_data_block - indirect block offset: %d <- %u\n",
-              offset, newblock);
-
-    write_int_to_buffer(bh->b_data + offset, newblock);
-    mark_buffer_dirty(bh);
-    sync_dirty_buffer(bh);
-    brelse(bh);
-done:
-    DEBUG_LOG("vvsfs - assign_data_block - done\n");
-    return newblock;
-}
-
-/* Calculate the data block map index for a given position
- * within the given inode data blocks.
- *
- * @vi: Inode information of the target inode
- * @sb: Superblock of the filesytsem
- * @d_pos: Position of the data block within the inode
- *
- * @return: (int): 0 or greater if data block exists in
- *                 inode, error otherwise
- */
-static int vvsfs_index_data_block(struct vvsfs_inode_info *vi,
-                                  struct super_block *sb,
-                                  uint32_t d_pos) {
-    struct buffer_head *bh;
-    int offset;
-    uint32_t index;
-    DEBUG_LOG("vvsfs - index_data_block\n");
-    DEBUG_LOG("vvsfs - index_data_block - d_pos: %u\n", d_pos);
-    if (d_pos < VVSFS_LAST_DIRECT_BLOCK_INDEX) {
-        DEBUG_LOG("vvsfs - index_data_block - direct done\n");
-        return vi->i_data[d_pos];
-    }
-    bh = READ_BLOCK(sb, vi, VVSFS_LAST_DIRECT_BLOCK_INDEX);
-    if (!bh) {
-        DEBUG_LOG("vvsfs - index_data_block - failed to read buffer data\n");
-        return -EIO;
-    }
-    offset = (d_pos - VVSFS_LAST_DIRECT_BLOCK_INDEX) * VVSFS_INDIRECT_PTR_SIZE;
-    DEBUG_LOG("vvsfs - index_data_block - offset: %u\n", offset);
-    index = read_int_from_buffer(bh->b_data + offset);
-    brelse(bh);
-    DEBUG_LOG("vvsfs - index_data_block - indirect done: %u -> %d\n", offset, index);
-    return index;
-}
-
 // This is a helper function for the "create"
 // inode operation. It adds a new entry to the
 // list of directory entries in the parent
@@ -741,7 +748,9 @@ static int vvsfs_add_new_entry(struct inode *dir,
         dno = (uint32_t)newblock;
     } else {
         if ((raw_dno = vvsfs_index_data_block(dir_info, sb, d_pos)) < 0) {
-            DEBUG_LOG("vvsfs - add_new_entry - failed get data block index %d\n", raw_dno);
+            DEBUG_LOG(
+                "vvsfs - add_new_entry - failed get data block index %d\n",
+                raw_dno);
             return raw_dno;
         }
         dno = (uint32_t)raw_dno;
