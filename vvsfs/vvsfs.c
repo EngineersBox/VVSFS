@@ -1582,12 +1582,46 @@ static int vvsfs_delete_entry_last_block(struct inode *dir,
     return 0;
 }
 
+// TODO: Docstring
+static struct vvsfs_dir_entry* vvsfs_get_last_dentry(struct inode* inode,
+                                                     struct vvsfs_inode_info *vi) {
+    struct super_block *sb;
+    struct buffer_head *bh;
+    struct buffer_head *i_bh;
+    struct vvsfs_dir_entry *dentry;
+    uint32_t index;
+    uint32_t offset;
+    DEBUG_LOG("vvsfs - get_last_dentry\n");
+    sb = inode->i_sb;
+    if (vi->i_db_count < VVSFS_N_BLOCKS) {
+        bh = READ_BLOCK(sb, vi, vi->i_db_count - 1);
+        if (!bh) {
+            DEBUG_LOG("vvsfs - get_last_dentry - failed to read direct block\n");
+            return ERR_PTR(-EIO);
+        }
+    } else {
+        i_bh = READ_BLOCK(sb, vi, VVSFS_LAST_DIRECT_BLOCK_INDEX);
+        if (!i_bh) {
+            DEBUG_LOG("vvsfs - get_last_dentry - failed to read indirect block\n");
+            return ERR_PTR(-EIO);
+        }
+        index = read_int_fom_buffer(i_bh->b_data + ((vi->i_db_count - VVSFS_N_BLOCKS) * VVSFS_INDIRECT_PTR_SIZE));
+        bh = READ_BLOCK_OFF(sb, index);
+        if (!bh) {
+            brelse(i_bh);
+            return ERR_PTR(-EIO);
+        }
+    }
+    offset = inode->i_size % VVSFS_DENTRYSIZE;
+    return READ_DENTRY_OFF(bh->data, offset);
+}
+
 /* Remove the dentry specified via bufloc from the
  * current data block
  *
  * @dir: Target directory inode
  * @bufloc: Specification of dentry location in data
- * block (assumed already resolved)
+ *          block (assumed already resolved)
  *
  * @return: (int) 0 if successful, error otherwise
  */
@@ -1595,7 +1629,6 @@ static int vvsfs_delete_entry_block(struct inode *dir,
                                     struct vvsfs_inode_info *vi,
                                     struct bufloc_t *bufloc) {
     struct vvsfs_dir_entry *last_dentry;
-    struct buffer_head *bh_end;
     int err;
     int last_block_dentry_count;
     DEBUG_LOG("vvsfs - delete_entry_block\n");
@@ -1605,17 +1638,17 @@ static int vvsfs_delete_entry_block(struct inode *dir,
     DEBUG_LOG("vvsfs - delete_entry_bufloc - not "
               "last block, fill hole "
               "from last block\n");
-    bh_end = READ_BLOCK(dir->i_sb, vi, vi->i_db_count - 1);
-    last_dentry = READ_DENTRY(bh_end, last_block_dentry_count - 1);
+    last_dentry = vvsfs_get_last_dentry(dir, vi);
+    if (IS_ERR(last_dentry)) {
+        return PTR_ERR(last_dentry);
+    }
     memcpy(bufloc->dentry, last_dentry, VVSFS_DENTRYSIZE);
-    memset(last_dentry, 0, VVSFS_DENTRYSIZE);
     if (last_block_dentry_count == 1 &&
         (err = vvsfs_dealloc_data_block(dir, bufloc->b_index))) {
         return err;
+    } else {
+        memset(last_dentry, 0, VVSFS_DENTRYSIZE);
     }
-    // Persist the changes to the end block
-    mark_buffer_dirty(bh_end);
-    brelse(bh_end);
     DEBUG_LOG("vvsfs - delete_entry_block - done \n");
     return 0;
 }
