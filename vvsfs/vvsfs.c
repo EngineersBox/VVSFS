@@ -1930,8 +1930,14 @@ static int vvsfs_empty_dir(struct inode *dir) {
     int last_block_dentry_count;
     int current_block_dentry_count;
     DEBUG_LOG("vvsfs - empty_dir\n");
-    // Retrieve vvsfs specific inode data from dir
-    // inode
+
+    // Check that this is actually a directory
+    if (!S_ISDIR(dir->i_mode)) {
+        DEBUG_LOG("vvsfs - empty_dir - not actually a directory\n");
+        return -ENOTDIR;
+    }
+
+    // Retrieve vvsfs specific inode data from dir inode
     vi = VVSFS_I(dir);
     LAST_BLOCK_DENTRY_COUNT(dir, last_block_dentry_count);
     // Retrieve superblock object for R/W to disk
@@ -2003,7 +2009,7 @@ static int vvsfs_rename(struct user_namespace *namespace,
                         struct dentry *new_dentry,
                         unsigned int flags) {
     int err;
-    struct bufloc_t loc;
+    struct bufloc_t src_loc, dst_loc;
     struct inode *old_inode = d_inode(old_dentry);
     struct inode *new_inode = d_inode(new_dentry);
 
@@ -2026,7 +2032,7 @@ static int vvsfs_rename(struct user_namespace *namespace,
 
     // Find the original dentry for the file
     err = vvsfs_find_entry(
-        old_dir, old_dentry, BL_PERSIST_BUFFER | BL_PERSIST_DENTRY, &loc);
+        old_dir, old_dentry, BL_PERSIST_BUFFER | BL_PERSIST_DENTRY, &src_loc);
     if (err) {
         DEBUG_LOG("vvsfs - rename - failed to find entry\n");
         err = -ENOENT;
@@ -2036,14 +2042,15 @@ static int vvsfs_rename(struct user_namespace *namespace,
     // Check if we are simply renaming a file in the same directory
     if (new_dir == old_dir) {
         // Update the name of the file directly within the dentry
-        strncpy(
-            loc.dentry->name, new_dentry->d_name.name, new_dentry->d_name.len);
-        loc.dentry->name[new_dentry->d_name.len] = '\0';
+        strncpy(src_loc.dentry->name,
+                new_dentry->d_name.name,
+                new_dentry->d_name.len);
+        src_loc.dentry->name[new_dentry->d_name.len] = '\0';
 
         // Persist the changes
-        mark_buffer_dirty(loc.bh);
-        sync_dirty_buffer(loc.bh);
-        brelse(loc.bh);
+        mark_buffer_dirty(src_loc.bh);
+        sync_dirty_buffer(src_loc.bh);
+        brelse(src_loc.bh);
 
         // Update parent dir metadata
         new_dir->i_ctime = new_dir->i_mtime = current_time(new_dir);
@@ -2052,16 +2059,51 @@ static int vvsfs_rename(struct user_namespace *namespace,
         return 0;
     }
 
-    // Copy the dentry to the new location
-    // Note this automatically checks to see if the directory is full
-    err = vvsfs_add_new_entry(new_dir, new_dentry, old_inode);
-    if (err) {
-        DEBUG_LOG("vvsfs - rename - failed to create dentry in new location\n");
-        goto out_needs_brelse;
+    // If there already exists a file at the destination, we need to overwrite
+    // the dentry to point to the source inode
+    if (new_inode) {
+        // Get the vvsfs representation of the dentry
+        err = vvsfs_find_entry(new_dir,
+                               new_dentry,
+                               BL_PERSIST_BUFFER | BL_PERSIST_DENTRY,
+                               &dst_loc);
+        if (err) {
+            DEBUG_LOG("vvsfs - rename - failed to find new dentry\n");
+            err = -ENOENT;
+            goto out_err;
+        }
+        // Update the dentry to point to the src inode
+        dst_loc.dentry->inode_number = src_loc.dentry->inode_number;
+        mark_buffer_dirty(dst_loc.bh);
+        sync_dirty_buffer(dst_loc.bh);
+        brelse(dst_loc.bh);
+
+        new_dir->i_mtime = new_dir->i_ctime = current_time(new_dir);
+        mark_inode_dirty(new_dir);
+
+        // Remove the existing file at the directory (by dropping link count)
+        new_inode->i_ctime = current_time(new_inode);
+        DEBUG_LOG("vvsfs - rename - new_inode link count before: %u\n",
+                  new_inode->i_nlink);
+        inode_dec_link_count(new_inode);
+        DEBUG_LOG("vvsfs - rename - new_inode link count after: %u\n",
+                  new_inode->i_nlink);
+        mark_inode_dirty(new_inode);
+    } else {
+        // Copy the dentry to the new location
+        // Note this automatically checks to see if the directory is full
+        err = vvsfs_add_new_entry(new_dir, new_dentry, old_inode);
+        if (err) {
+            DEBUG_LOG(
+                "vvsfs - rename - failed to create dentry in new location\n");
+            goto out_needs_brelse;
+        }
     }
 
+    mark_inode_dirty(old_inode);
+
     // Delete the dentry from the old position
-    err = vvsfs_delete_entry_bufloc(old_dir, &loc);
+    err = vvsfs_delete_entry_bufloc(old_dir, &src_loc);
     if (err) {
         DEBUG_LOG("vvsfs - rename - failed to delete entry\n");
         goto out_err;
@@ -2072,7 +2114,7 @@ static int vvsfs_rename(struct user_namespace *namespace,
     return 0;
 
 out_needs_brelse:
-    brelse(loc.bh);
+    brelse(src_loc.bh);
 out_err:
     return err;
 }
