@@ -67,6 +67,10 @@ static struct inode_operations vvsfs_dir_inode_operations;
 static struct file_operations vvsfs_dir_operations;
 static struct super_operations vvsfs_ops;
 
+static struct inode_operations vvsfs_symlink_inode_operations = {
+    .get_link = page_get_link,
+};
+
 struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino);
 
 // vvsfs_file_get_block
@@ -156,7 +160,7 @@ static int vvsfs_write_begin(struct file *file,
 #endif
                              struct page **pagep,
                              void **fsdata) {
-    printk("vvsfs - write_begin");
+    printk("vvsfs - write_begin [%d]", mapping->host->i_ino);
 
     if (pos + len > VVSFS_MAXFILESIZE)
         return -EFBIG;
@@ -182,7 +186,7 @@ static int vvsfs_write_end(struct file *file,
     struct vvsfs_inode_info *vi = VVSFS_I(inode);
     int ret;
 
-    printk("vvsfs - write_end");
+    printk("vvsfs - write_end, [%i]", inode->i_ino);
 
     ret = generic_write_end(file, mapping, pos, len, copied, page, fsdata);
     if (ret < len) {
@@ -199,7 +203,6 @@ static int vvsfs_write_end(struct file *file,
 }
 
 static struct address_space_operations vvsfs_as_operations = {
-
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
     .readpage = vvsfs_readpage,
 #else
@@ -428,6 +431,11 @@ struct inode *vvsfs_new_inode(const struct inode *dir, umode_t mode) {
     if (S_ISDIR(mode)) {
         inode->i_op = &vvsfs_dir_inode_operations;
         inode->i_fop = &vvsfs_dir_operations;
+    } else if (S_ISLNK(mode)) {
+        inode->i_op = &vvsfs_symlink_inode_operations;
+        // since we are using page_symlink we need to set this first
+        inode_nohighmem(inode);
+        inode->i_mapping->a_ops = &vvsfs_as_operations;
     } else {
         inode->i_op = &vvsfs_file_inode_operations;
         inode->i_fop = &vvsfs_file_operations;
@@ -627,6 +635,68 @@ static int vvsfs_link(struct dentry *old_dentry,
     d_instantiate(dentry, inode);
 
     printk("Link created %ld\n", inode->i_ino);
+    return 0;
+}
+
+// The "symlink" operation.
+// Creates a new inode and stores the symlink pointer in the data
+static int
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
+vvsfs_symlink(struct user_namespace *namespace,
+#else
+vvsfs_symlink(struct mnt_idmap *namespace,
+#endif
+              struct inode *dir,
+              struct dentry *dentry,
+              const char *symname) {
+    struct vvsfs_inode_info *dir_info;
+    int ret;
+    struct buffer_head *bh;
+    struct inode *inode;
+
+    DEBUG_LOG("vvsfs - symlink : %s\n", dentry->d_name.name);
+
+    if (dentry->d_name.len > VVSFS_MAXNAME) {
+        printk("vvsfs - symlink - file name too long");
+        return -ENAMETOOLONG;
+    }
+
+    dir_info = VVSFS_I(dir);
+    if (!dir_info) {
+        printk("vvsfs - symlink - vi_dir null!");
+        return -EINVAL;
+    }
+
+    // create a new inode for the new file/directory
+    inode = vvsfs_new_inode(dir, S_IFLNK | S_IRWXUGO);
+    if (IS_ERR(inode)) {
+        printk("vvsfs - symlink - new_inode error!");
+        brelse(bh);
+        return -ENOSPC;
+    }
+
+    int err;
+    err = page_symlink(inode, symname, strlen(symname) + 1);
+    if (err) {
+        inode_dec_link_count(inode);
+        discard_new_inode(inode);
+        return err;
+    }
+
+    // add the file/directory to the parent directory's list
+    // of entries -- on disk.
+    ret = vvsfs_add_new_entry(dir, dentry, inode);
+    if (ret != 0) {
+        inode_dec_link_count(inode);
+        discard_new_inode(inode);
+        return ret;
+    }
+
+    d_instantiate(dentry, inode);
+    mark_inode_dirty(inode);
+
+    // attach the new inode object to the VFS directory entry object.
+    DEBUG_LOG("Symlink created %ld\n", inode->i_ino);
     return 0;
 }
 
@@ -1169,6 +1239,7 @@ static struct inode_operations vvsfs_dir_inode_operations = {
     .link = vvsfs_link,
     .rmdir = vvsfs_rmdir,
     .unlink = vvsfs_unlink,
+    .symlink = vvsfs_symlink,
 };
 
 // This implements the super operation for writing a 'dirty' inode to disk
@@ -1347,6 +1418,11 @@ struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino) {
     if (S_ISDIR(inode->i_mode)) {
         inode->i_op = &vvsfs_dir_inode_operations;
         inode->i_fop = &vvsfs_dir_operations;
+    } else if (S_ISLNK(inode->i_mode)) {
+        inode->i_op = &vvsfs_symlink_inode_operations;
+        // since we are using page_symlink we need to set this first
+        inode_nohighmem(inode);
+        inode->i_mapping->a_ops = &vvsfs_as_operations;
     } else {
         inode->i_op = &vvsfs_file_inode_operations;
         inode->i_fop = &vvsfs_file_operations;
