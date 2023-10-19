@@ -338,7 +338,7 @@ static int vvsfs_write_end(struct file *file,
 
     ret = generic_write_end(file, mapping, pos, len, copied, page, fsdata);
     if (ret < len) {
-        printk("wrote less than requested.");
+        LOG("wrote less than requested.");
         return ret;
     }
 
@@ -840,20 +840,20 @@ vvsfs_create(struct mnt_idmap *namespace,
     LOG("vvsfs - create : %s\n", dentry->d_name.name);
 
     if (dentry->d_name.len > VVSFS_MAXNAME) {
-        printk("vvsfs - create - file name too long");
+        LOG("vvsfs - create - file name too long");
         return -ENAMETOOLONG;
     }
 
     dir_info = VVSFS_I(dir);
     if (!dir_info) {
-        printk("vvsfs - create - vi_dir null!");
+        LOG("vvsfs - create - vi_dir null!");
         return -EINVAL;
     }
 
     // create a new inode for the new file/directory
     inode = vvsfs_new_inode(dir, mode, 0);
     if (IS_ERR(inode)) {
-        printk("vvsfs - create - new_inode error!");
+        LOG("vvsfs - create - new_inode error!");
         brelse(bh);
         return -ENOSPC;
     }
@@ -871,7 +871,7 @@ vvsfs_create(struct mnt_idmap *namespace,
     // directory entry object.
     d_instantiate(dentry, inode);
 
-    printk("File created %ld\n", inode->i_ino);
+    LOG("File created %ld\n", inode->i_ino);
     return 0;
 }
 
@@ -889,13 +889,13 @@ static int vvsfs_link(struct dentry *old_dentry,
     LOG("vvsfs - link : %s\n", dentry->d_name.name);
 
     if (dentry->d_name.len > VVSFS_MAXNAME) {
-        printk("vvsfs - link - file name too long");
+        LOG("vvsfs - link - file name too long");
         return -ENAMETOOLONG;
     }
 
     dir_info = VVSFS_I(dir);
     if (!dir_info) {
-        printk("vvsfs - link - vi_dir null!");
+        LOG("vvsfs - link - vi_dir null!");
         return -EINVAL;
     }
 
@@ -921,7 +921,7 @@ static int vvsfs_link(struct dentry *old_dentry,
 
     d_instantiate(dentry, inode);
 
-    printk("Link created %ld\n", inode->i_ino);
+    LOG("Link created %ld\n", inode->i_ino);
     return 0;
 }
 
@@ -1885,10 +1885,10 @@ static int vvsfs_empty_dir(struct inode *dir) {
     // Progressively load datablocks into memory and
     // check dentries
     for (i = 0; i < vi->i_db_count; i++) {
-        printk("vvsfs - empty_dir - reading dno: %d, "
-               "disk block: %d\n",
-               vi->i_data[i],
-               vvsfs_get_data_block(vi->i_data[i]));
+        LOG("vvsfs - empty_dir - reading dno: %d, "
+            "disk block: %d\n",
+            vi->i_data[i],
+            vvsfs_get_data_block(vi->i_data[i]));
         bh = READ_BLOCK(dir->i_sb, vi, i);
         if (!bh) {
             // Buffer read failed, no more data when
@@ -1925,8 +1925,8 @@ static int vvsfs_rmdir(struct inode *dir, struct dentry *dentry) {
     struct inode *inode = d_inode(dentry);
     int err = -ENOTEMPTY;
     if (!vvsfs_empty_dir(inode)) {
-        printk("vvsfs - rmdir - directory is not "
-               "empty\n");
+        LOG("vvsfs - rmdir - directory is not "
+            "empty\n");
         return err;
     } else if ((err = vvsfs_unlink(dir, dentry))) {
         DEBUG_LOG("vvsfs - rmdir - unlink error: %d\n", err);
@@ -2123,7 +2123,7 @@ struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino) {
 
     bh = sb_bread(sb, inode_block);
     if (!bh) {
-        printk("vvsfs - iget - failed sb_read");
+        LOG("vvsfs - iget - failed sb_read");
         return ERR_PTR(-EIO);
     }
 
@@ -2228,7 +2228,7 @@ static int vvsfs_fill_super(struct super_block *s, void *data, int silent) {
 
     hblock = bdev_logical_block_size(s->s_bdev);
     if (hblock > VVSFS_BLOCKSIZE) {
-        printk("vvsfs - device blocks are too small!!");
+        LOG("vvsfs - device blocks are too small!!");
         return -1;
     }
 
@@ -2241,7 +2241,7 @@ static int vvsfs_fill_super(struct super_block *s, void *data, int silent) {
     bh = sb_bread(s, 0);
     magic = *((uint32_t *)bh->b_data);
     if (magic != VVSFS_MAGIC) {
-        printk("vvsfs - wrong magic number\n");
+        LOG("vvsfs - wrong magic number\n");
         return -EINVAL;
     }
     brelse(bh);
@@ -2250,7 +2250,7 @@ static int vvsfs_fill_super(struct super_block *s, void *data, int silent) {
      * map */
     sbi = kzalloc(sizeof(struct vvsfs_sb_info), GFP_KERNEL);
     if (!sbi) {
-        printk("vvsfs - error allocating vvsfs_sb_info");
+        LOG("vvsfs - error allocating vvsfs_sb_info");
         return -ENOMEM;
     }
 
@@ -2288,7 +2288,7 @@ static int vvsfs_fill_super(struct super_block *s, void *data, int silent) {
     root_inode = vvsfs_iget(s, 1);
 
     if (IS_ERR(root_inode)) {
-        printk("vvsfs - fill_super - error getting "
+        LOG("vvsfs - fill_super - error getting "
                "root inode");
         return PTR_ERR(root_inode);
     }
@@ -2304,7 +2304,7 @@ static int vvsfs_fill_super(struct super_block *s, void *data, int silent) {
     s->s_root = d_make_root(root_inode);
 
     if (!s->s_root) {
-        printk("vvsfs - fill_super - failed setting "
+        LOG("vvsfs - fill_super - failed setting "
                "up root directory");
         iput(root_inode);
         return -ENOMEM;
@@ -2386,16 +2386,16 @@ static struct file_system_type vvsfs_type = {
 static int __init vvsfs_init(void) {
     int ret = vvsfs_init_inode_cache();
     if (ret) {
-        printk("inode cache creation failed");
+        LOG("inode cache creation failed");
         return ret;
     }
 
-    printk("Registering vvsfs\n");
+    LOG("Registering vvsfs\n");
     return register_filesystem(&vvsfs_type);
 }
 
 static void __exit vvsfs_exit(void) {
-    printk("Unregistering the vvsfs.\n");
+    LOG("Unregistering the vvsfs.\n");
     unregister_filesystem(&vvsfs_type);
     vvsfs_destroy_inode_cache();
 }
