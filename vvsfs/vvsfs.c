@@ -187,7 +187,7 @@ static int vvsfs_assign_data_block(struct vvsfs_inode_info *dir_info,
         // We don't have a block to store indirect pointers
         // use the newblock just allocated for consistency
         // and reserve another block for the actual data
-        DEBUG_LOG("vvsfs - assign_data_block indirect block not allocated, "
+        DEBUG_LOG("vvsfs - assign_data_block - indirect block not allocated, "
                   "allocating\n");
         indirect_block = newblock;
         newblock = vvsfs_reserve_data_block(sbi->dmap);
@@ -1750,6 +1750,51 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir,
     return err;
 }
 
+/* Free all data blocks in a given inode
+ *
+ * @inode: Target inode to free all indirect and direct
+ *         data blocks
+ *
+ * @return: (int) 0 if successful, error otherwise
+ */
+static int vvsfs_free_inode_blocks(struct inode *inode) {
+    struct super_block *sb;
+    struct vvsfs_sb_info *i_sb;
+    struct vvsfs_inode_info *vi;
+    struct buffer_head *i_bh;
+    struct buffer_head *bh;
+    int i;
+    int indirect;
+    int direct;
+    uint32_t index;
+    vi = VVSFS_I(inode);
+    sb = inode->i_sb;
+    i_sb = sb->s_fs_info;
+    direct = min((int)VVSFS_LAST_DIRECT_BLOCK_INDEX, (int)vi->i_db_count);
+    indirect =
+        max((int)0, ((int)vi->i_db_count) - VVSFS_LAST_DIRECT_BLOCK_INDEX);
+    for (i = 0; i < direct; i++) {
+        vvsfs_free_data_block(i_sb->dmap, vi->i_data[i]);
+    }
+    if (indirect == 0) {
+        vvsfs_ops.sync_fs(sb, 1);
+        return 0;
+    }
+    i_bh = READ_BLOCK(sb, vi, VVSFS_LAST_DIRECT_BLOCK_INDEX);
+    if (!i_bh) {
+        return -EIO;
+    }
+    for (i = 0; i < indirect; i++) {
+        index =
+            read_int_from_buffer(i_bh->b_data + (i * VVSFS_INDIRECT_PTR_SIZE));
+        vvsfs_free_data_block(i_sb->dmap, index);
+    }
+    brelse(bh);
+    vvsfs_free_data_block(i_sb->dmap,
+                          vi->i_data[VVSFS_LAST_DIRECT_BLOCK_INDEX]);
+    return 0;
+}
+
 /* Unlink a dentry from a given directory inode
  *
  * @dir: Directory to remove from
@@ -1778,6 +1823,11 @@ static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
     if (err) {
         DEBUG_LOG("vvsfs - unlink - failed to delete "
                   "entry\n");
+        return err;
+    }
+    err = vvsfs_free_inode_blocks(inode);
+    if (err) {
+        DEBUG_LOG("vvsfs - unlink - failed to free inode blocks\n");
         return err;
     }
     inode->i_ctime = dir->i_ctime;
