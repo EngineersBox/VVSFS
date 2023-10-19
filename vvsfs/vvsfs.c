@@ -1378,6 +1378,23 @@ static int vvsfs_find_entry(struct inode *dir,
     return 1;
 }
 
+/* Shifts data blocks around to ensure that there are not holes,
+ * this method assumes that a data block has been freed, which
+ * is the target to fill. Full generality across direct and
+ * indirect blocks is supported (all support conditional
+ * deallocation of the last block if newly emptied to fill
+ * earlierblock dentry hole):
+ * - Direct only movement (no indirect blocks in use)
+ * - Indirect block dentry moved to direct block hole
+ * - Indirect block dentry moved to other indirect block hole
+ *
+ * @vi: Inode information for inode of target blocks and dentries
+ * @sb: Superblock of the filesystem
+ * @i_sb: VVSFS specific superblock information
+ * @block_index: Target freed data block index
+ *
+ * @return: (int) 0 if successful, error otherwise
+ */
 static int vvsfs_shift_blocks_back(struct vvsfs_inode_info *vi,
                                    struct super_block *sb,
                                    struct vvsfs_sb_info *i_sb,
