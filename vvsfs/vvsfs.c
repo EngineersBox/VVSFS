@@ -1777,7 +1777,6 @@ static int vvsfs_free_inode_blocks(struct inode *inode) {
         vvsfs_free_data_block(i_sb->dmap, vi->i_data[i]);
     }
     if (indirect == 0) {
-        vvsfs_ops.sync_fs(sb, 1);
         return 0;
     }
     i_bh = READ_BLOCK(sb, vi, VVSFS_LAST_DIRECT_BLOCK_INDEX);

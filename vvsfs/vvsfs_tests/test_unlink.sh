@@ -10,15 +10,15 @@ ln testdir/aaa testdir/bbb
 ln testdir/aaa testdir/ccc
 ln testdir/ccc testdir/ddd
 echo "$content" > testdir/bbb
-touch testdir/other.txt
+dd status=none if=/dev/random of=testdir/other bs="$VVSFS_BLOCKSIZE" count="$VVSFS_MAX_INODE_BLOCKS"
 
 ./remount.sh
 
 # ==== CORE BEHAVIOUR ====
 
 # Remove regular file
-rm testdir/other.txt
-assert_eq "$(find testdir -type f -name "other.txt" | wc -l)" "0" "cannot remove a regular file"
+rm testdir/other
+assert_eq "$(find testdir -type f -name "other" | wc -l)" "0" "cannot remove a regular file"
 check_log_success "Can remove a regular file"
 assert_eq "$(stat -c %s testdir)" "512" "expected total size == 512"
 check_log_success "Total block size of file system is correct after removal"
