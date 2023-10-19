@@ -383,9 +383,9 @@ static int vvsfs_read_dentries_direct(struct vvsfs_inode_info *vi,
     DEBUG_LOG("vvsfs - read_dentires_direct - reading %u data blocks\n",
               db_count);
     for (i = 0; i < db_count; ++i) {
-        printk("vvsfs - read_dentries_direct - reading dno: %d, disk block: %d",
-               vi->i_data[i],
-               vvsfs_get_data_block(vi->i_data[i]));
+        //LOG("vvsfs - read_dentries_direct - reading dno: %d, disk block: %d",
+        //       vi->i_data[i],
+        //       vvsfs_get_data_block(vi->i_data[i]));
         bh = READ_BLOCK(sb, vi, i);
         if (!bh) {
             // Buffer read failed, no more data when we expected some
@@ -394,11 +394,11 @@ static int vvsfs_read_dentries_direct(struct vvsfs_inode_info *vi,
             return -EIO;
         }
         // Copy the dentry into the data array
-        DEBUG_LOG("vvsfs - read_dentries_direct - base: %p, address: %p, "
-                  "offset: %x\n",
-                  data,
-                  data + (i * VVSFS_BLOCKSIZE),
-                  i * VVSFS_BLOCKSIZE);
+        //DEBUG_LOG("vvsfs - read_dentries_direct - base: %p, address: %p, "
+        //          "offset: %x\n",
+        //          data,
+        //          data + (i * VVSFS_BLOCKSIZE),
+        //          i * VVSFS_BLOCKSIZE);
         memcpy(data + i * VVSFS_BLOCKSIZE, bh->b_data, VVSFS_BLOCKSIZE);
         brelse(bh);
     }
@@ -436,9 +436,9 @@ static int vvsfs_read_dentries_indirect(struct vvsfs_inode_info *vi,
     for (i = 0; i < db_count; ++i) {
         offset =
             read_int_from_buffer(i_bh->b_data + (i * VVSFS_INDIRECT_PTR_SIZE));
-        LOG("vvsfs - read_entries_indirect - reading dno: %d, disk block: %u",
-            offset,
-            vvsfs_get_data_block(offset));
+        //LOG("vvsfs - read_entries_indirect - reading dno: %d, disk block: %u",
+        //    offset,
+        //    vvsfs_get_data_block(offset));
         bh = READ_BLOCK_OFF(sb, offset);
         if (!bh) {
             // Buffer read failed, no more data when we expected some
@@ -447,11 +447,11 @@ static int vvsfs_read_dentries_indirect(struct vvsfs_inode_info *vi,
             return -EIO;
         }
         // Copy the dentry into the data array
-        DEBUG_LOG("vvsfs - read_dentries_indirect - base: %p, address: %p "
-                  "offset: %x\n",
-                  data,
-                  data + (i * VVSFS_BLOCKSIZE),
-                  i * VVSFS_BLOCKSIZE);
+        //DEBUG_LOG("vvsfs - read_dentries_indirect - base: %p, address: %p "
+        //          "offset: %x\n",
+        //          data,
+        //          data + (i * VVSFS_BLOCKSIZE),
+        //          i * VVSFS_BLOCKSIZE);
         memcpy(data + i * VVSFS_BLOCKSIZE, bh->b_data, VVSFS_BLOCKSIZE);
         brelse(bh);
     }
@@ -552,8 +552,8 @@ void hexDump(char *desc, void *addr, int len) {
 }
 
 static void vvsfs_dump_dentry(struct vvsfs_dir_entry *dentry) {
-    DEBUG_LOG(
-        "DENTRY [name: %s] [inode: %d]\n", dentry->name, dentry->inode_number);
+    /*DEBUG_LOG(*/
+        /*"DENTRY [name: %s] [inode: %d]\n", dentry->name, dentry->inode_number);*/
 }
 
 // vvsfs_readdir - reads a directory and places the result using filldir, cached
@@ -580,7 +580,7 @@ static int vvsfs_readdir(struct file *filp, struct dir_context *ctx) {
          i < num_dirs && filp->f_pos < dir->i_size;
          ++i) {
         dentry = READ_DENTRY_OFF(data, i);
-        DEBUG_LOG("vvsfs - readdir - emitting dentry %d: %p\n", i, dentry);
+        //DEBUG_LOG("vvsfs - readdir - emitting dentry %d: %p\n", i, dentry);
         vvsfs_dump_dentry(dentry);
         if (!(err = dir_emit(ctx,
                              dentry->name,
@@ -1197,22 +1197,22 @@ static int vvsfs_find_entry_in_block(struct buffer_head *bh,
         dentry = READ_DENTRY(bh, d);
         name = dentry->name;
         inumber = dentry->inode_number;
-        DEBUG_LOG("vvsfs - find_entry_in_block - d: "
-                  "%d, name: %s, inumber: %d\n",
-                  d,
-                  name,
-                  inumber);
+        //DEBUG_LOG("vvsfs - find_entry_in_block - d: "
+        //          "%d, name: %s, inumber: %d\n",
+        //          d,
+        //          name,
+        //          inumber);
         // Skip if reserved or name does not match
-        DEBUG_LOG("vvsfs - find_entry_in_block - "
-                  "comparing %s (%zu) == %s (%d)\n",
-                  name,
-                  strlen(name),
-                  target_name,
-                  target_name_len);
+        //DEBUG_LOG("vvsfs - find_entry_in_block - "
+        //          "comparing %s (%zu) == %s (%d)\n",
+        //          name,
+        //          strlen(name),
+        //          target_name,
+        //          target_name_len);
         if (!inumber || !namecmp(name, target_name, target_name_len) != 0) {
-            DEBUG_LOG("vvsfs - find_entry_in_block - "
-                      "name match failed or "
-                      "inumber == 0");
+            //DEBUG_LOG("vvsfs - find_entry_in_block - "
+            //          "name match failed or "
+            //          "inumber == 0");
             continue;
         }
         out_loc->b_index = i;
@@ -1280,10 +1280,10 @@ static int vvsfs_find_entry_direct(struct vvsfs_inode_info *vi,
     direct_blocks =
         min(vi->i_db_count, (uint32_t)VVSFS_LAST_DIRECT_BLOCK_INDEX);
     for (i = 0; i < direct_blocks; i++) {
-        printk("vvsfs - find_entry - reading dno: "
-               "%d, disk block: %d",
-               vi->i_data[i],
-               vvsfs_get_data_block(vi->i_data[i]));
+        //LOG("vvsfs - find_entry - reading dno: "
+        //       "%d, disk block: %d",
+        //       vi->i_data[i],
+        //       vvsfs_get_data_block(vi->i_data[i]));
         bh = READ_BLOCK(sb, vi, i);
         if (!bh) {
             // Buffer read failed, no more data when
@@ -1360,6 +1360,7 @@ static int vvsfs_find_entry_indirect(struct vvsfs_inode_info *vi,
                                        flags,
                                        out_loc)) {
             DEBUG_LOG("vvsfs - find_entry - indirect done (found)");
+            out_loc->b_index += VVSFS_LAST_DIRECT_BLOCK_INDEX;
             brelse(i_bh);
             return 0;
         }
@@ -1709,6 +1710,7 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir,
                   "failed to resolve bufloc\n");
         return err;
     }
+    DEBUG_LOG("vvsfs - delete_dentry_bufloc - block index: %u block count (index): %u\n", bufloc->b_index, vi->i_db_count - 1);
     // Determine if we are in the last block
     if (bufloc->b_index == vi->i_db_count - 1) {
         if ((err = vvsfs_delete_entry_last_block(dir, bufloc))) {
@@ -1968,11 +1970,11 @@ static int vvsfs_write_inode(struct inode *inode,
     inode_block = vvsfs_get_inode_block(inode->i_ino);
     inode_offset = vvsfs_get_inode_offset(inode->i_ino);
 
-    printk("vvsfs - write_inode - ino: %ld, block: "
-           "%d, offset: %d",
-           inode->i_ino,
-           inode_block,
-           inode_offset);
+    /*LOG("vvsfs - write_inode - ino: %ld, block: "*/
+           /*"%d, offset: %d",*/
+           /*inode->i_ino,*/
+           /*inode_block,*/
+           /*inode_offset);*/
     bh = sb_bread(sb, inode_block);
     if (!bh)
         return -EIO;

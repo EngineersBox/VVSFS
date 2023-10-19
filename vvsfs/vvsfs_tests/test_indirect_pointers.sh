@@ -9,11 +9,15 @@ log_header "Test inode indirect pointers"
 direct_and_one_indirect_dentries=$((VVSFS_N_DENTRY_PER_BLOCK * VVSFS_N_BLOCKS))
 # Includes 1.5 indirect blocks
 count=$(($direct_and_one_indirect_dentries + (VVSFS_N_DENTRY_PER_BLOCK / 2)))
+expected="file0"
 for (( i = 0; i < count; i++)); do
-    echo "Creating: testdir/file$i"
     touch "testdir/file$i"
-    assert_eq "$(find testdir -type f -name "file$i" | wc -l)" "1" "expected file$i to exist"
+    if (( i > 0 )); then
+        expected="$expected file$i"
+    fi
 done
+readDirEntryNames testdir
+assert_eq "$names" "$expected" "expected all $count files to exist"
 
 # Ensure that unlinks can move blocks from indirect to direct
 rm testdir/file0
@@ -31,7 +35,7 @@ assert_eq "$stuff" "$(cat "$last_entry")" "expected last entry to contain writte
 # Remove all dentries from last block
 dentries_in_last_block=$(((VVSFS_N_DENTRY_PER_BLOCK / 2) - 1))
 for (( i = 0; i < dentries_in_last_block; i++)); do
-    rm "testdir/file$((direct_and_one_indirect_dentries - 1 + i))"
+    rm "testdir/file$((direct_and_one_indirect_dentries + i))"
 done
 readDirEntryNames testdir
 last_dentry="${names##* }"
