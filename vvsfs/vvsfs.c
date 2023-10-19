@@ -1788,6 +1788,7 @@ static int vvsfs_free_inode_blocks(struct inode *inode) {
             read_int_from_buffer(i_bh->b_data + (i * VVSFS_INDIRECT_PTR_SIZE));
         vvsfs_free_data_block(i_sb->dmap, index);
     }
+    brelse(i_bh);
     brelse(bh);
     vvsfs_free_data_block(i_sb->dmap,
                           vi->i_data[VVSFS_LAST_DIRECT_BLOCK_INDEX]);
