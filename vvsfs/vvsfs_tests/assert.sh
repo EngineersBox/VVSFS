@@ -47,6 +47,12 @@ log_failure() {
   printf "${RED}✖ %s${NORMAL}\n" "$@" >&2
 }
 
+check_log_success() {
+  local msg=$1
+  if [ $? -eq 0 ]; then
+    log_success "$msg"
+  fi
+}
 
 assert_eq() {
   local expected="$1"
