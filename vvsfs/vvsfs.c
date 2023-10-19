@@ -308,7 +308,7 @@ static int vvsfs_write_begin(struct file *file,
 #endif
                              struct page **pagep,
                              void **fsdata) {
-    LOG("vvsfs - write_begin [%d]", mapping->host->i_ino);
+    LOG("vvsfs - write_begin [%lu]\n", mapping->host->i_ino);
 
     if (pos + len > VVSFS_MAXFILESIZE)
         return -EFBIG;
@@ -334,7 +334,7 @@ static int vvsfs_write_end(struct file *file,
     struct vvsfs_inode_info *vi = VVSFS_I(inode);
     int ret;
 
-    LOG("vvsfs - write_end, [%i]", inode->i_ino);
+    LOG("vvsfs - write_end, [%lu]\n", inode->i_ino);
 
     ret = generic_write_end(file, mapping, pos, len, copied, page, fsdata);
     if (ret < len) {
@@ -926,6 +926,7 @@ vvsfs_symlink(struct mnt_idmap *namespace,
               const char *symname) {
     struct vvsfs_inode_info *dir_info;
     int ret;
+    int err;
     struct buffer_head *bh;
     struct inode *inode;
 
@@ -950,7 +951,6 @@ vvsfs_symlink(struct mnt_idmap *namespace,
         return -ENOSPC;
     }
 
-    int err;
     err = page_symlink(inode, symname, strlen(symname) + 1);
     if (err) {
         inode_dec_link_count(inode);
