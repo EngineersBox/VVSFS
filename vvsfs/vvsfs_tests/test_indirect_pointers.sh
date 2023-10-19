@@ -1,6 +1,7 @@
 #!/bin/bash
 
 source init.sh
+source ./read_dir_entry_names.sh
 
 log_header "Test inode indirect pointers"
 
