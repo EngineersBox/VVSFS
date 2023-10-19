@@ -1378,6 +1378,86 @@ static int vvsfs_find_entry(struct inode *dir,
     return 1;
 }
 
+/* Shift back blocks and fill holes for direct blocks only.
+ * Assumed that the target block is within the direct blocks.
+ *
+ * @vi: Inode information for inode of target blocks and dentries
+ * @i_sb: VVSFS specific superblock information
+ * @bh: Buffer for the indirect block in the last entry of direct
+ *      blocks in this inode
+ * @block_indexx: Target freed data block index
+ */
+static void vvsfs_shift_direct_only(struct vvsfs_inode_info *vi,
+                                    uint32_t block_index) {
+    size_t count;
+    DEBUG_LOG(
+        "vvsfs - shift_blocks_back - only direct, index: %u, blocks: %u\n",
+        block_index,
+        vi->i_db_count);
+    count = (--vi->i_db_count) - block_index;
+    DEBUG_LOG("vvsfs - shift_blocks_back - count: %zu\n", count);
+    DEBUG_LOG("vvsfs - shift_blocks_back - "
+              "i_db_count after: %d\n",
+              vi->i_db_count);
+    if (count > 0) {
+        // Implementation specific behaviour for memmove len of 0
+        // just don't do it and avoid poptential issues
+        memmove(&vi->i_data[block_index],
+                &vi->i_data[block_index + 1],
+                count * VVSFS_INDIRECT_PTR_SIZE);
+    }
+    // Ensure the last block is not set (avoids
+    // duplication of last element from shift back)
+    vi->i_data[vi->i_db_count] = 0;
+}
+
+/* Shift back blocks and fill holes for indirect blocks only.
+ * Assumed that the target block is within the indirect blocks.
+ *
+ * @vi: Inode information for inode of target blocks and dentries
+ * @i_sb: VVSFS specific superblock information
+ * @bh: Buffer for the indirect block in the last entry of direct
+ *      blocks in this inode
+ * @block_indexx: Target freed data block index
+ */
+static void vvsfs_shift_indirect_only(struct vvsfs_inode_info *vi,
+                                      struct vvsfs_sb_info *i_sb,
+                                      struct buffer_head *bh,
+                                      uint32_t block_index) {
+    size_t count;
+    DEBUG_LOG("vvsfs - shift_blocks_back - only indirect, index: %u, "
+              "blocks: %u\n",
+              block_index,
+              vi->i_db_count);
+    count = (--vi->i_db_count) - block_index;
+    DEBUG_LOG("vvsfs - shift_blocks_back - "
+              "i_db_count after: %d\n",
+              vi->i_db_count);
+    if (count > 0) {
+        memmove(bh->b_data + (block_index * VVSFS_INDIRECT_PTR_SIZE),
+                bh->b_data + ((block_index + 1) * VVSFS_INDIRECT_PTR_SIZE),
+                count * VVSFS_INDIRECT_PTR_SIZE);
+    }
+    if (vi->i_db_count == VVSFS_N_BLOCKS) {
+        DEBUG_LOG("vvsfs - shift_blocks_back - was last indrect, freeing "
+                  "indirect block\n");
+        vvsfs_free_data_block(i_sb->dmap,
+                              vi->i_data[VVSFS_LAST_DIRECT_BLOCK_INDEX]);
+    } else {
+        DEBUG_LOG("vvsfs - shift_blocks_back - was not last indirect, "
+                  "setting last index %d to zero\n",
+                  vi->i_db_count - VVSFS_LAST_DIRECT_BLOCK_INDEX);
+        // Ensure the last block is not set (avoids
+        // duplication of last element from shift back)
+        write_int_to_buffer(
+            bh->b_data + ((vi->i_db_count - VVSFS_LAST_DIRECT_BLOCK_INDEX) *
+                          VVSFS_INDIRECT_PTR_SIZE),
+            0);
+    }
+    mark_buffer_dirty(bh);
+    brelse(bh);
+}
+
 /* Shifts data blocks around to ensure that there are not holes,
  * this method assumes that a data block has been freed, which
  * is the target to fill. Full generality across direct and
@@ -1387,6 +1467,9 @@ static int vvsfs_find_entry(struct inode *dir,
  * - Direct only movement (no indirect blocks in use)
  * - Indirect block dentry moved to direct block hole
  * - Indirect block dentry moved to other indirect block hole
+ *
+ * Note that this method will mark the buffer dirt and release
+ * it, persiting any changes made.
  *
  * @vi: Inode information for inode of target blocks and dentries
  * @sb: Superblock of the filesystem
@@ -1404,25 +1487,7 @@ static int vvsfs_shift_blocks_back(struct vvsfs_inode_info *vi,
     size_t count;
     if (vi->i_db_count < VVSFS_N_BLOCKS) {
         // Only direct blocks
-        DEBUG_LOG(
-            "vvsfs - shift_blocks_back - only direct, index: %u, blocks: %u\n",
-            block_index,
-            vi->i_db_count);
-        count = (--vi->i_db_count) - block_index;
-        DEBUG_LOG("vvsfs - shift_blocks_back - count: %zu\n", count);
-        DEBUG_LOG("vvsfs - shift_blocks_back - "
-                  "i_db_count after: %d\n",
-                  vi->i_db_count);
-        if (count > 0) {
-            // Implementation specific behaviour for memmove len of 0
-            // just don't do it and avoid poptential issues
-            memmove(&vi->i_data[block_index],
-                    &vi->i_data[block_index + 1],
-                    count * VVSFS_INDIRECT_PTR_SIZE);
-        }
-        // Ensure the last block is not set (avoids
-        // duplication of last element from shift back)
-        vi->i_data[vi->i_db_count] = 0;
+        vvsfs_shift_direct_only(vi, block_index);
         return 0;
     }
     bh = READ_BLOCK(sb, vi, VVSFS_LAST_DIRECT_BLOCK_INDEX);
@@ -1431,42 +1496,14 @@ static int vvsfs_shift_blocks_back(struct vvsfs_inode_info *vi,
     }
     if (block_index >= VVSFS_N_BLOCKS) {
         // Only indirect blocks
-        DEBUG_LOG("vvsfs - shift_blocks_back - only indirect, index: %u, "
-                  "blocks: %u\n",
-                  block_index,
-                  vi->i_db_count);
-        count = (--vi->i_db_count) - block_index;
-        DEBUG_LOG("vvsfs - shift_blocks_back - "
-                  "i_db_count after: %d\n",
-                  vi->i_db_count);
-        if (count > 0) {
-            memmove(bh->b_data + (block_index * VVSFS_INDIRECT_PTR_SIZE),
-                    bh->b_data + ((block_index + 1) * VVSFS_INDIRECT_PTR_SIZE),
-                    count * VVSFS_INDIRECT_PTR_SIZE);
-        }
-        if (vi->i_db_count == VVSFS_N_BLOCKS) {
-            DEBUG_LOG("vvsfs - shift_blocks_back - was last indrect, freeing "
-                      "indirect block\n");
-            brelse(bh);
-            vvsfs_free_data_block(i_sb->dmap,
-                                  vi->i_data[VVSFS_LAST_DIRECT_BLOCK_INDEX]);
-        } else {
-            DEBUG_LOG("vvsfs - shift_blocks_back - was not last indirect, "
-                      "setting last index %d to zero\n",
-                      vi->i_db_count - VVSFS_LAST_DIRECT_BLOCK_INDEX);
-            // Ensure the last block is not set (avoids
-            // duplication of last element from shift back)
-            write_int_to_buffer(
-                bh->b_data + ((vi->i_db_count - VVSFS_LAST_DIRECT_BLOCK_INDEX) *
-                              VVSFS_INDIRECT_PTR_SIZE),
-                0);
-        }
+        vvsfs_shift_indirect_only(vi, i_sb, bh, block_index);
         return 0;
     }
     replacement = read_int_from_buffer(bh->b_data);
     vi->i_db_count--;
     count = VVSFS_N_BLOCKS - block_index;
     if (block_index < VVSFS_LAST_DIRECT_BLOCK_INDEX) {
+        // Move indirect block to direct
         DEBUG_LOG("vvsfs - shift_blocks_back - has indirect, is direct, index: "
                   "%u, blocks: %u\n",
                   block_index,
@@ -1477,16 +1514,21 @@ static int vvsfs_shift_blocks_back(struct vvsfs_inode_info *vi,
         DEBUG_LOG("vvsfs - shift_blocks_back - was not lat indect, setting "
                   "last index %d to zero\n",
                   vi->i_db_count - VVSFS_N_BLOCKS);
+        // Overwrite the old last block pointer with zeros
         write_int_to_buffer(
             bh->b_data + ((vi->i_db_count - VVSFS_LAST_DIRECT_BLOCK_INDEX) *
                           VVSFS_INDIRECT_PTR_SIZE),
             0);
+        // Actually assign the indirect block to the end of the direct blocks
+        // this also avoids needing to write zeros to the end
         vi->i_data[VVSFS_LAST_DIRECT_BLOCK_INDEX - 2] = replacement;
         DEBUG_LOG("vvsfs - shift_blocks_back - writing first entry %u from "
                   "indirect blocks to last direct block\n",
                   replacement);
     }
     if (vi->i_db_count == VVSFS_LAST_DIRECT_BLOCK_INDEX) {
+        // Moved indirect block was last, since it is now a direct block
+        // we can free the indirect block in the last index of vi->i_data
         DEBUG_LOG("vvsfs - shift_blocks_back - shifted last indirect block, "
                   "freeing indirect block\n");
         brelse(bh);
@@ -1499,6 +1541,7 @@ static int vvsfs_shift_blocks_back(struct vvsfs_inode_info *vi,
     }
     count = block_index - VVSFS_LAST_DIRECT_BLOCK_INDEX;
     if (count > 0) {
+        // Shift all indirect blocks after hole down
         memmove(bh->b_data,
                 bh->b_data + VVSFS_INDIRECT_PTR_SIZE,
                 count * VVSFS_INDIRECT_PTR_SIZE);
@@ -1506,10 +1549,13 @@ static int vvsfs_shift_blocks_back(struct vvsfs_inode_info *vi,
     DEBUG_LOG("vvsfs - shift_blocks_back - was not last indirect, setting last "
               "index %d to zero\n",
               vi->i_db_count - VVSFS_N_BLOCKS);
+    // Overwrite the old last block pointer with zeros
     write_int_to_buffer(bh->b_data +
                             ((vi->i_db_count - VVSFS_LAST_DIRECT_BLOCK_INDEX) *
                              VVSFS_INDIRECT_PTR_SIZE),
                         0);
+    mark_buffer_dirty(bh);
+    brelse(bh);
     return 0;
 }
 
