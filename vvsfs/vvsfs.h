@@ -49,6 +49,7 @@ struct vvsfs_inode {
     uint32_t i_atime;                 // Access time
     uint32_t i_mtime;                 // Modification time
     uint32_t i_ctime;                 // Creation time
+    uint32_t i_rdev;                  // rdev stuff (for special files)
 };
 
 #define VVSFS_MAXNAME 123 // maximum size of filename
