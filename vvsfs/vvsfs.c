@@ -521,8 +521,7 @@ static int vvsfs_readdir(struct file *filp, struct dir_context *ctx) {
         DEBUG_LOG("vvsfs - readdir - failed cached dentries read: %d\n", err);
         return err;
     }
-    // hexDump("DATA", data, 1 * VVSFS_DENTRYSIZE);
-    //  Iterate over dentries and emit them into the dcache
+    // Iterate over dentries and emit them into the dcache
     for (i = ctx->pos / VVSFS_DENTRYSIZE;
          i < num_dirs && filp->f_pos < dir->i_size;
          ++i) {
