@@ -1761,7 +1761,6 @@ static int vvsfs_free_inode_blocks(struct inode *inode) {
     struct super_block *sb;
     struct vvsfs_sb_info *i_sb;
     struct vvsfs_inode_info *vi;
-    struct buffer_head *i_bh;
     struct buffer_head *bh;
     int i;
     int indirect;
@@ -1779,16 +1778,15 @@ static int vvsfs_free_inode_blocks(struct inode *inode) {
     if (indirect == 0) {
         return 0;
     }
-    i_bh = READ_BLOCK(sb, vi, VVSFS_LAST_DIRECT_BLOCK_INDEX);
-    if (!i_bh) {
+    bh = READ_BLOCK(sb, vi, VVSFS_LAST_DIRECT_BLOCK_INDEX);
+    if (!bh) {
         return -EIO;
     }
     for (i = 0; i < indirect; i++) {
         index =
-            read_int_from_buffer(i_bh->b_data + (i * VVSFS_INDIRECT_PTR_SIZE));
+            read_int_from_buffer(bh->b_data + (i * VVSFS_INDIRECT_PTR_SIZE));
         vvsfs_free_data_block(i_sb->dmap, index);
     }
-    brelse(i_bh);
     brelse(bh);
     vvsfs_free_data_block(i_sb->dmap,
                           vi->i_data[VVSFS_LAST_DIRECT_BLOCK_INDEX]);
