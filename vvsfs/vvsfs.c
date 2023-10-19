@@ -308,7 +308,7 @@ static int vvsfs_write_begin(struct file *file,
 #endif
                              struct page **pagep,
                              void **fsdata) {
-    printk("vvsfs - write_begin [%d]", mapping->host->i_ino);
+    LOG("vvsfs - write_begin [%d]", mapping->host->i_ino);
 
     if (pos + len > VVSFS_MAXFILESIZE)
         return -EFBIG;
@@ -334,7 +334,7 @@ static int vvsfs_write_end(struct file *file,
     struct vvsfs_inode_info *vi = VVSFS_I(inode);
     int ret;
 
-    printk("vvsfs - write_end, [%i]", inode->i_ino);
+    LOG("vvsfs - write_end, [%i]", inode->i_ino);
 
     ret = generic_write_end(file, mapping, pos, len, copied, page, fsdata);
     if (ret < len) {
@@ -932,20 +932,20 @@ vvsfs_symlink(struct mnt_idmap *namespace,
     DEBUG_LOG("vvsfs - symlink : %s\n", dentry->d_name.name);
 
     if (dentry->d_name.len > VVSFS_MAXNAME) {
-        printk("vvsfs - symlink - file name too long");
+        LOG("vvsfs - symlink - file name too long");
         return -ENAMETOOLONG;
     }
 
     dir_info = VVSFS_I(dir);
     if (!dir_info) {
-        printk("vvsfs - symlink - vi_dir null!");
+        LOG("vvsfs - symlink - vi_dir null!");
         return -EINVAL;
     }
 
     // create a new inode for the new file/directory
     inode = vvsfs_new_inode(dir, S_IFLNK | S_IRWXUGO, 0);
     if (IS_ERR(inode)) {
-        printk("vvsfs - symlink - new_inode error!");
+        LOG("vvsfs - symlink - new_inode error!");
         brelse(bh);
         return -ENOSPC;
     }
@@ -1223,9 +1223,9 @@ static int vvsfs_find_entry_direct(struct vvsfs_inode_info *vi,
         min(vi->i_db_count, (uint32_t)VVSFS_LAST_DIRECT_BLOCK_INDEX);
     for (i = 0; i < direct_blocks; i++) {
         LOG("vvsfs - find_entry - reading dno: "
-                "%d, disk block: %d",
-                vi->i_data[i],
-                vvsfs_get_data_block(vi->i_data[i]));
+            "%d, disk block: %d",
+            vi->i_data[i],
+            vvsfs_get_data_block(vi->i_data[i]));
         bh = READ_BLOCK(sb, vi, i);
         if (!bh) {
             // Buffer read failed, no more data when
