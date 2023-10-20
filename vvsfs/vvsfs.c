@@ -94,12 +94,12 @@ static uint32_t read_int_from_buffer(char *buf) {
     sb_bread((sb), vvsfs_get_data_block((offset)))
 #define READ_BLOCK(sb, vi, index) READ_BLOCK_OFF(sb, (vi)->i_data[(index)])
 #define READ_DENTRY_OFF(data, offset)                                          \
-    ((struct vvsfs_dir_entry *)((data) + (offset)*VVSFS_DENTRYSIZE))
+    ((struct vvsfs_dir_entry *)((data) + (offset) * VVSFS_DENTRYSIZE))
 #define READ_DENTRY(bh, offset) READ_DENTRY_OFF((bh)->b_data, offset)
 #define READ_INDIRECT_BLOCK(sb, indirect_bh, i)                                \
     READ_BLOCK_OFF(sb,                                                         \
                    read_int_from_buffer((indirect_bh)->b_data +                \
-                                        ((i)*VVSFS_INDIRECT_PTR_SIZE)))
+                                        ((i) * VVSFS_INDIRECT_PTR_SIZE)))
 
 // Avoid using char* as a byte array since some systems may have a 16 bit char
 // type this ensures that any system that has 8 bits = 1 byte will be valid for
@@ -122,6 +122,7 @@ static struct inode_operations vvsfs_symlink_inode_operations = {
 };
 
 struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino);
+static int vvsfs_free_inode_blocks(struct inode *inode);
 
 /* Calculate the data block map index for a given position
  * within the given inode data blocks.
@@ -863,6 +864,8 @@ vvsfs_create(struct mnt_idmap *namespace,
     if (ret != 0) {
         DEBUG_LOG("vvsfs - create - failed to create new entry for intial data "
                   "block\n");
+        vvsfs_free_inode_blocks(inode);
+        discard_new_inode(inode);
         return ret;
     }
 
@@ -964,7 +967,7 @@ vvsfs_symlink(struct mnt_idmap *namespace,
 
     err = page_symlink(inode, symname, strlen(symname) + 1);
     if (err) {
-        inode_dec_link_count(inode);
+        vvsfs_free_inode_blocks(inode);
         discard_new_inode(inode);
         return err;
     }
@@ -973,7 +976,7 @@ vvsfs_symlink(struct mnt_idmap *namespace,
     // of entries -- on disk.
     ret = vvsfs_add_new_entry(dir, dentry, inode);
     if (ret != 0) {
-        inode_dec_link_count(inode);
+        vvsfs_free_inode_blocks(inode);
         discard_new_inode(inode);
         return ret;
     }
@@ -1027,6 +1030,8 @@ static int vvsfs_mknod(struct user_namespace *mnt_userns,
     // of entries -- on disk.
     ret = vvsfs_add_new_entry(dir, dentry, inode);
     if (ret != 0) {
+        vvsfs_free_inode_blocks(inode);
+        discard_new_inode(inode);
         return ret;
     }
 
@@ -1788,6 +1793,9 @@ static int vvsfs_free_inode_blocks(struct inode *inode) {
     int indirect;
     int direct;
     uint32_t index;
+
+    DEBUG_LOG("vvsfs - free inode blocks - %lu", inode->i_ino);
+
     vi = VVSFS_I(inode);
     sb = inode->i_sb;
     i_sb = sb->s_fs_info;
