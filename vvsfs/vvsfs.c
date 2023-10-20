@@ -2261,7 +2261,7 @@ static uint32_t count_free(uint8_t* map, uint32_t size) {
         for (j = 0; j < 8; j++) {
             if (i == 0 && j == 0) {
                 continue; // Block 0 is reserved
-            } else if ((~map[i]) & (0x80 >> j)) {
+            } else if ((~map[i]) & (VVSFS_SET_MAP_BIT >> j)) {
                 count++;
             }
         }
@@ -2275,16 +2275,27 @@ static uint32_t count_free(uint8_t* map, uint32_t size) {
 // for various stats that you need to provide.
 static int vvsfs_statfs(struct dentry *dentry, struct kstatfs *buf) {
     LOG("vvsfs - statfs\n");
-    struct super_block *sb = dentry->d_sb;
-    struct vvsfs_sb_info *i_sb = sb->s_fs_info;
-    buf->f_blocks = 0; // TODO
+    struct super_block *sb;
+    struct vvsfs_sb_info *i_sb;
+    uint64_t id;
+    sb = dentry->d_sb;
+    i_sb = sb->s_fs_info;
+    // Retrieve the device id from the superblock device data
+    id = huge_encode_dev(sb->s_bdev->bd_dev);
+    // Convert the raw device id to __kernel_fsid_t
+    buf->f_fsid = u64_to_fsid(id);
+    buf->f_blocks = i_sb->nblocks;
     buf->f_bfree = count_free(i_sb->dmap, VVSFS_DMAP_SIZE);
+    // We don't have any privilege scoped block access
+    // behaviour so bavail is the same as bfree
     buf->f_bavail = buf->f_bfree;
-    buf->f_files = 0; // TODO
+    buf->f_files = i_sb->ninodes;
     buf->f_ffree = count_free(i_sb->imap, VVSFS_IMAP_SIZE);
     buf->f_namelen = VVSFS_MAXNAME;
     buf->f_type = VVSFS_MAGIC;
     buf->f_bsize = VVSFS_BLOCKSIZE;
+    buf->f_fnamelen = VVSFS_MAXNAME;
+    LOG("vvsfs - statfs - done\n");
     return 0;
 }
 
@@ -2330,6 +2341,11 @@ static int vvsfs_fill_super(struct super_block *s, void *data, int silent) {
         LOG("vvsfs - error allocating vvsfs_sb_info");
         return -ENOMEM;
     }
+
+    /* Set max supported blocks */
+    sbi->nblocks = VVSFS_MAXBLOCKS;
+    /* Set max supported inodes */
+    sbi->ninodes = VVSFS_IMAP_SIZE * VVSFS_N_DENTRY_PER_BLOCK;
 
     /* Load the inode map */
     sbi->imap = kzalloc(VVSFS_IMAP_SIZE, GFP_KERNEL);
