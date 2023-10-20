@@ -94,3 +94,35 @@ check_log_success "Last dentry in last block can be removed and block is dealloc
 readDirEntryNames testdir
 assert_eq "$names" "$expected" "Expected last dentry in last block to be removed"
 check_log_success "Dentry ordering is updated to reflect last dentry removal and last block deallocation"
+
+# Reset
+./create.sh
+
+touch testdir/file{1..9}
+
+rm testdir/file1
+expected="file9"
+for (( i = 2; i < 9; i++ )); do
+     expected="$expected file$i"
+done
+readDirEntryNames testdir
+assert_eq "$names" "$expected" "Expected file1 to be replaced by file9 through dentry reordering across blocks"
+check_log_success "Relocates dentry from last block to first block"
+
+rm testdir/file2
+expected="file9 file8"
+for (( i = 3; i < 8; i++ )); do
+     expected="$expected file$i"
+done
+readDirEntryNames testdir
+assert_eq "$names" "$expected" "Expected file2 to be replaced by file8 through dentry reordering within same block"
+check_log_success "Dentry is relocated within same block to non-first location"
+
+rm testdir/file7
+expected="file9 file8"
+for (( i = 3; i < 7; i++ )); do
+     expected="$expected file$i"
+done
+readDirEntryNames testdir
+assert_eq "$names" "$expected" "Expected file7 to have been removed"
+check_log_success "Removing dentry in last place of last block doesn't affect other blocks or dentries"
