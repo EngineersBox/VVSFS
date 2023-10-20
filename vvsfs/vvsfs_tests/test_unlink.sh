@@ -171,3 +171,19 @@ assert_eq "$(ls testdir | wc -l)" "$VVSFS_MAX_DENTRIES" "expected all previous r
 check_log_success "All previous resources are freed and reusable"
 
 rm testdir/*
+
+# Reset
+./create.sh
+
+MAX_LENGTH=$(printf "a/%.0s" $(seq 1 $VVSFS_MAX_INODE_ENTRIES))
+
+assert_eq "$(mkdir -p testdir/$MAX_LENGTH)" "" "expected all inodes to be available"
+check_log_success "Can create maximum quantity of inodes"
+
+assert_eq "$(touch testdir/file 2>&1)" "touch: cannot touch 'testdir/file': No space left on device" "expected all inodes to be used"
+check_log_success "Did create maximum quantity of inodes"
+
+rm testdir/file
+
+assert_eq "$(mkdir -p testdir/$MAX_LENGTH)" "" "expected all inodes to be available"
+check_log_success "All previous resources are freed and reusable"
