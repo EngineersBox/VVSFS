@@ -71,10 +71,6 @@ static void write_int_to_buffer(char *buf, uint32_t data) {
  * @return: (uint32_t) read integer value
  */
 static uint32_t read_int_from_buffer(char *buf) {
-    uint32_t data = 0;
-    data |= ((uint32_t)buf[0]) << 24;
-    data |= ((uint32_t)buf[1]) << 16;
-    data |= ((uint32_t)buf[2]) << 8;
     // Because some genius decided to use a char type to represent a byte in
     // the struct buffer_head b_data field (yes thats a signed data type with
     // potentially variable length of either 8 or 16 bits), we have to be very
@@ -84,7 +80,12 @@ static uint32_t read_int_from_buffer(char *buf) {
     // thing that struct buffer_head is deprecated in favour of struct bio in
     // linux >2.6 which DOES properly define an unsigned byte type for the
     // internal buffer.
-    data |= ((uint32_t)buf[3]) & 0xF0;
+    unsigned char* u_buf = (unsigned char*) buf;
+    uint32_t data = 0;
+    data |= ((uint32_t)u_buf[0]) << 24;
+    data |= ((uint32_t)u_buf[1]) << 16;
+    data |= ((uint32_t)u_buf[2]) << 8;
+    data |= ((uint32_t)u_buf[3]);
     DEBUG_LOG("read from buffer: %u\n", data);
     return data;
 }
@@ -2044,7 +2045,7 @@ static int vvsfs_write_inode(struct inode *inode,
     uint32_t inode_block, inode_offset;
     int i;
 
-    LOG("vvsfs - write_inode");
+    //LOG("vvsfs - write_inode");
 
     // get the vvsfs_inode_info associated with this
     // (VFS) inode from cache.
@@ -2085,7 +2086,7 @@ static int vvsfs_write_inode(struct inode *inode,
     sync_dirty_buffer(bh);
     brelse(bh);
 
-    LOG("vvsfs - write_inode done: %ld\n", inode->i_ino);
+    //LOG("vvsfs - write_inode done: %ld\n", inode->i_ino);
     return VVSFS_BLOCKSIZE;
 }
 
