@@ -2253,20 +2253,38 @@ static void vvsfs_put_super(struct super_block *sb) {
     }
 }
 
+static uint32_t count_free(uint8_t* map, uint32_t size) {
+    int i;
+    uint8_t j;
+    uint32_t count = 0;
+    for (i = 0; i < size; i++) {
+        for (j = 0; j < 8; j++) {
+            if (i == 0 && j == 0) {
+                continue; // Block 0 is reserved
+            } else if ((~map[i]) & (0x80 >> j)) {
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
 // statfs -- this is currently incomplete.
 // See
 // https://elixir.bootlin.com/linux/v5.15.89/source/fs/ext2/super.c#L1407
 // for various stats that you need to provide.
 static int vvsfs_statfs(struct dentry *dentry, struct kstatfs *buf) {
     LOG("vvsfs - statfs\n");
-
+    struct super_block *sb = dentry->d_sb;
+    struct vvsfs_sb_info *i_sb = sb->s_fs_info;
+    buf->f_blocks = 0; // TODO
+    buf->f_bfree = count_free(i_sb->dmap, VVSFS_DMAP_SIZE);
+    buf->f_bavail = buf->f_bfree;
+    buf->f_files = 0; // TODO
+    buf->f_ffree = count_free(i_sb->imap, VVSFS_IMAP_SIZE);
     buf->f_namelen = VVSFS_MAXNAME;
     buf->f_type = VVSFS_MAGIC;
     buf->f_bsize = VVSFS_BLOCKSIZE;
-
-    // TODO: fill in other information about the file
-    // system.
-
     return 0;
 }
 
