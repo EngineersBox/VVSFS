@@ -56,6 +56,7 @@
  * @data: Integer to write to buffer
  */
 static void write_int_to_buffer(char *buf, uint32_t data) {
+    DEBUG_LOG("writing to buffer: %u\n", data);
     buf[0] = (data >> 24) & 0xFF;
     buf[1] = (data >> 16) & 0xFF;
     buf[2] = (data >> 8) & 0xFF;
@@ -71,10 +72,10 @@ static void write_int_to_buffer(char *buf, uint32_t data) {
  */
 static uint32_t read_int_from_buffer(char *buf) {
     uint32_t data = 0;
-    data |= (buf[0] << 24) & 0xff;
-    data |= (buf[1] << 16) & 0xFF;
-    data |= (buf[2] << 8) & 0xFF;
-    data |= buf[3] & 0xFF;
+    data |= ((uint32_t) buf[0]) << 24;
+    data |= ((uint32_t) buf[1]) << 16;
+    data |= ((uint32_t) buf[2]) << 8;
+    data |= (uint32_t)buf[3];
     return data;
 }
 
@@ -1699,8 +1700,8 @@ static int vvsfs_delete_entry_block(struct inode *dir,
     // Delete the last dentry (as it has been moved)
     memset(last_dentry, 0, VVSFS_DENTRYSIZE);
     // Deallocate last block since we move the only dentry in it
-    if (last_block_dentry_count == 1
-        && (err = vvsfs_dealloc_data_block(dir, vi->i_db_count - 1))) {
+    if (last_block_dentry_count == 1 &&
+        (err = vvsfs_dealloc_data_block(dir, vi->i_db_count - 1))) {
         return err;
     }
     mark_buffer_dirty(bh);
