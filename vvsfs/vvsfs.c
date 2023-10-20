@@ -1798,7 +1798,7 @@ static int vvsfs_free_inode_blocks(struct inode *inode) {
         vvsfs_free_data_block(i_sb->dmap, vi->i_data[i]);
     }
     if (indirect == 0) {
-        return 0;
+        goto free_inode;
     }
     bh = READ_BLOCK(sb, vi, VVSFS_LAST_DIRECT_BLOCK_INDEX);
     if (!bh) {
@@ -1812,6 +1812,8 @@ static int vvsfs_free_inode_blocks(struct inode *inode) {
     brelse(bh);
     vvsfs_free_data_block(i_sb->dmap,
                           vi->i_data[VVSFS_LAST_DIRECT_BLOCK_INDEX]);
+free_inode:
+    vvsfs_free_inode_block(i_sb->imap, inode->i_ino);
     return 0;
 }
 
