@@ -148,3 +148,26 @@ done
 readDirEntryNames testdir
 assert_eq "$names" "$expected" "Expected file7 to have been removed"
 check_log_success "Removing dentry in last place of last block doesn't affect other blocks or dentries"
+
+# ===== RESOURCE FREEING =====
+
+# Reset 
+./create.sh
+
+for (( i = 0; i < VVSFS_MAX_DENTRIES; i++ )); do
+    touch testdir/$i
+done
+assert_eq "$(ls testdir | wc -l)" "$VVSFS_MAX_DENTRIES" "unable to create maximum quanitity of dentries"
+check_log_success "Can create maximum quanitity of dentries"
+
+rm testdir/*
+assert_eq "$(ls testdir | wc -l)" "0" "resources of removed blocks and inodes are not freed"
+check_log_success "All dentries are freed"
+
+for (( i = 0; i < VVSFS_MAX_DENTRIES; i++ )); do
+    touch testdir/$i
+done
+assert_eq "$(ls testdir | wc -l)" "$VVSFS_MAX_DENTRIES" "expected all previous resources to be freed and fully usuable"
+check_log_success "All previous resources are freed and reusable"
+
+rm testdir/*
