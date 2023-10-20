@@ -639,7 +639,7 @@ static int vvsfs_write_inode(struct inode *inode,  struct writeback_control *wbc
     brelse(bh);
     
     if (DEBUG) printk("vvsfs - write_inode done: %ld\n", inode->i_ino);
-    return VVSFS_BLOCKSIZE;
+    return 0;
 
 }
 
