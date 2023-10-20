@@ -2294,7 +2294,6 @@ static int vvsfs_statfs(struct dentry *dentry, struct kstatfs *buf) {
     buf->f_namelen = VVSFS_MAXNAME;
     buf->f_type = VVSFS_MAGIC;
     buf->f_bsize = VVSFS_BLOCKSIZE;
-    buf->f_fnamelen = VVSFS_MAXNAME;
     LOG("vvsfs - statfs - done\n");
     return 0;
 }
