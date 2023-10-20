@@ -45,6 +45,28 @@ rm testdir/ccc testdir/bbb
 assert_eq "$(stat testdir/aaa -c %h)" "1" "expected link count == 1"
 check_log_success "Removing last hardlink keeps correct base link count of 1"
 
+# Reset
+
+./create.sh
+
+touch testdir/file{0001..1000}
+assert_eq "$(ls testdir | wc -l)" "1000" "expected 1000 files to be present"
+check_log_success "Can create large quanities of files"
+
+./remount.sh
+
+assert_eq "$(ls testdir | wc -l)" "1000" "expected 1000 files to be present after remount"
+check_log_success "Large quanities of files persist after remount"
+
+rm testdir/*
+assert_eq "$(ls testdir | wc -l)" "0" "expected all files to be removed"
+check_log_success "Removing large quanities of files succeeds"
+
+./remount.sh
+
+assert_eq "$(ls testdir | wc -l)" "0" "removed files persist after remount, expected them to be gone"
+check_log_success "Removed files do not persist after remount"
+
 # ==== BLOCK AND DENTRY HANDLING ====
 
 # Reset

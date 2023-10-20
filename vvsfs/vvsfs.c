@@ -80,7 +80,7 @@ static uint32_t read_int_from_buffer(char *buf) {
     // thing that struct buffer_head is deprecated in favour of struct bio in
     // linux >2.6 which DOES properly define an unsigned byte type for the
     // internal buffer.
-    unsigned char* u_buf = (unsigned char*) buf;
+    unsigned char *u_buf = (unsigned char *)buf;
     uint32_t data = 0;
     data |= ((uint32_t)u_buf[0]) << 24;
     data |= ((uint32_t)u_buf[1]) << 16;
@@ -564,8 +564,6 @@ namecmp(const char *name, const char *target_name, int target_name_len) {
 //                of the file to the directory entry.
 static struct dentry *
 vvsfs_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags) {
-    DEBUG_LOG("vvsfs - lookup\n");
-
     int num_dirs;
     int i;
     struct inode *inode = NULL;
@@ -575,7 +573,7 @@ vvsfs_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags) {
     bytearray_t data;
     target_name = dentry->d_name.name;
     target_name_len = dentry->d_name.len;
-
+    DEBUG_LOG("vvsfs - lookup\n");
     if (dentry->d_name.len > VVSFS_MAXNAME) {
         printk("vvsfs - lookup - file name too long");
         return ERR_PTR(-ENAMETOOLONG);
@@ -1825,11 +1823,10 @@ static int vvsfs_free_inode_blocks(struct inode *inode) {
  * @return: (int) 0 if successfull, error otherwise
  */
 static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
-    DEBUG_LOG("vvsfs - unlink\n");
     int err;
-    struct inode *inode = d_inode(dentry);
     struct bufloc_t loc;
-
+    struct inode *inode = d_inode(dentry);
+    DEBUG_LOG("vvsfs - unlink\n");
     if (dentry->d_name.len > VVSFS_MAXNAME) {
         printk("vvsfs - unlink - file name too long");
         return -ENAMETOOLONG;
@@ -2045,7 +2042,7 @@ static int vvsfs_write_inode(struct inode *inode,
     uint32_t inode_block, inode_offset;
     int i;
 
-    //LOG("vvsfs - write_inode");
+    // LOG("vvsfs - write_inode");
 
     // get the vvsfs_inode_info associated with this
     // (VFS) inode from cache.
@@ -2086,7 +2083,7 @@ static int vvsfs_write_inode(struct inode *inode,
     sync_dirty_buffer(bh);
     brelse(bh);
 
-    //LOG("vvsfs - write_inode done: %ld\n", inode->i_ino);
+    // LOG("vvsfs - write_inode done: %ld\n", inode->i_ino);
     return VVSFS_BLOCKSIZE;
 }
 
