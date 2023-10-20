@@ -402,7 +402,6 @@ static int vvsfs_read_dentries_direct(struct vvsfs_inode_info *vi,
         bh = READ_BLOCK(sb, vi, i);
         if (!bh) {
             // Buffer read failed, no more data when we expected some
-            kfree(data);
             DEBUG_LOG("vvsfs - read_dentries_direct - failed buffer read\n");
             return -EIO;
         }
@@ -593,6 +592,7 @@ vvsfs_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags) {
             if (!inode) {
                 DEBUG_LOG("vvsfs - lookup - failed to get inode: %u\n",
                           dent->inode_number);
+                kfree(data);
                 return ERR_PTR(-EACCES);
             }
             d_add(dentry, inode);
