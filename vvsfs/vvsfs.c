@@ -1614,6 +1614,9 @@ static int vvsfs_delete_entry_last_block(struct inode *dir,
                   "last block, last dentry "
                   "in block, zero the entry\n");
         memset(bufloc->dentry, 0, VVSFS_DENTRYSIZE);
+        DEBUG_LOG("vvsfs - delete_entry_bufloc - last count: %d, b_index: %u\n",
+                  last_block_dentry_count,
+                  bufloc->b_index);
         if (last_block_dentry_count == 1 &&
             (err = vvsfs_dealloc_data_block(dir, bufloc->b_index))) {
             return err;
@@ -1651,9 +1654,12 @@ static int vvsfs_delete_entry_block(struct inode *dir,
     struct buffer_head *bh;
     struct super_block *sb;
     int last_block_dentry_count;
+    int err;
     uint32_t index;
     DEBUG_LOG("vvsfs - delete_entry_block\n");
     LAST_BLOCK_DENTRY_COUNT(dir, last_block_dentry_count);
+    DEBUG_LOG("vvsfs - delete_entry_block - last block dentry count: %d\n",
+              last_block_dentry_count);
     sb = dir->i_sb;
     // Fill the hole with the last dentry in the last
     // block
@@ -1692,6 +1698,11 @@ static int vvsfs_delete_entry_block(struct inode *dir,
     memcpy(bufloc->dentry, last_dentry, VVSFS_DENTRYSIZE);
     // Delete the last dentry (as it has been moved)
     memset(last_dentry, 0, VVSFS_DENTRYSIZE);
+    // Deallocate last block since we move the only dentry in it
+    if (last_block_dentry_count == 1
+        && (err = vvsfs_dealloc_data_block(dir, vi->i_db_count - 1))) {
+        return err;
+    }
     mark_buffer_dirty(bh);
     brelse(bh);
     DEBUG_LOG("vvsfs - delete_entry_block - done \n");
