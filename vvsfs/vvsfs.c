@@ -316,6 +316,8 @@ namecmp(const char *name, const char *target_name, int target_name_len) {
 //                of the file to the directory entry.
 static struct dentry *
 vvsfs_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags) {
+    DEBUG_LOG("vvsfs - lookup\n");
+
     int num_dirs;
     int i;
     struct inode *inode = NULL;
@@ -325,7 +327,12 @@ vvsfs_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags) {
     bytearray_t data;
     target_name = dentry->d_name.name;
     target_name_len = dentry->d_name.len;
-    DEBUG_LOG("vvsfs - lookup\n");
+
+    if (dentry->d_name.len > VVSFS_MAXNAME) {
+        printk("vvsfs - lookup - file name too long");
+        return ERR_PTR(-ENAMETOOLONG);
+    }
+
     data = vvsfs_read_dentries(dir, &num_dirs);
     if (IS_ERR(data)) {
         int err = PTR_ERR(data);
@@ -1125,10 +1132,16 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir,
  * @return: (int) 0 if successfull, error otherwise
  */
 static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
+    DEBUG_LOG("vvsfs - unlink\n");
     int err;
     struct inode *inode = d_inode(dentry);
     struct bufloc_t loc;
-    DEBUG_LOG("vvsfs - unlink\n");
+
+    if (dentry->d_name.len > VVSFS_MAXNAME) {
+        printk("vvsfs - unlink - file name too long");
+        return -ENAMETOOLONG;
+    }
+
     err = vvsfs_find_entry(
         dir, dentry, BL_PERSIST_BUFFER | BL_PERSIST_DENTRY, &loc);
     if (err) {
