@@ -6,17 +6,18 @@ touch -t 0711171533 testdir/access_modification_test_file
 
 ./remount.sh
 
-expected="2007-11-17 15:33:00.000000000 +0000"
-output=$(stat testdir/access_modification_test_file -c "%x")
+# we use epoch instead of pretty print because timezones are hard
+expected="1195273980"
+output=$(stat testdir/access_modification_test_file -c %X)
 assert_eq "$output" "$expected" "testing access time"
-output=$(stat testdir/access_modification_test_file -c "%y")
+output=$(stat testdir/access_modification_test_file -c %Y)
 assert_eq "$output" "$expected" "testing modification time"
 
 cat testdir/access_modification_test_file
 
 ./remount.sh
 
-output=$(stat testdir/access_modification_test_file -c "%x")
+output=$(stat testdir/access_modification_test_file -c %X)
 assert_not_eq "$output" "$expected" "testing access time"
-output=$(stat testdir/access_modification_test_file -c "%y")
+output=$(stat testdir/access_modification_test_file -c %Y)
 assert_eq "$output" "$expected" "testing modification time"

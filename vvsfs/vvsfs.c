@@ -359,7 +359,8 @@ vvsfs_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags) {
 // vvsfs_create() ). It takes care of reserving an inode block on disk (by
 // modifiying the inode bitmap), creating an VFS inode object (in memory) and
 // attach filesystem-specific information to that VFS inode.
-struct inode *vvsfs_new_inode(const struct inode *dir, umode_t mode) {
+struct inode *
+vvsfs_new_inode(const struct inode *dir, umode_t mode, dev_t rdev) {
     struct vvsfs_inode_info *inode_info;
     struct super_block *sb;
     struct vvsfs_sb_info *sbi;
@@ -428,7 +429,11 @@ struct inode *vvsfs_new_inode(const struct inode *dir, umode_t mode) {
     set_nlink(inode, 1);
 
     // check if the inode is for a directory, using the macro S_ISDIR
-    if (S_ISDIR(mode)) {
+    if (S_ISREG(mode)) {
+        inode->i_op = &vvsfs_file_inode_operations;
+        inode->i_fop = &vvsfs_file_operations;
+        inode->i_mapping->a_ops = &vvsfs_as_operations;
+    } else if (S_ISDIR(mode)) {
         inode->i_op = &vvsfs_dir_inode_operations;
         inode->i_fop = &vvsfs_dir_operations;
     } else if (S_ISLNK(mode)) {
@@ -437,10 +442,8 @@ struct inode *vvsfs_new_inode(const struct inode *dir, umode_t mode) {
         inode_nohighmem(inode);
         inode->i_mapping->a_ops = &vvsfs_as_operations;
     } else {
-        inode->i_op = &vvsfs_file_inode_operations;
-        inode->i_fop = &vvsfs_file_operations;
-        // if the inode is a file, set the address space operations
-        inode->i_mapping->a_ops = &vvsfs_as_operations;
+        // inode is special
+        init_special_inode(inode, inode->i_mode, rdev);
     }
 
     /*
@@ -531,6 +534,9 @@ static int vvsfs_add_new_entry(struct inode *dir,
 
     dir->i_size = (num_dirs + 1) * VVSFS_DENTRYSIZE;
     dir->i_blocks = dir_info->i_db_count * (VVSFS_BLOCKSIZE / VVSFS_SECTORSIZE);
+
+    // update time for posix compliance
+    dir->i_atime = dir->i_mtime = dir->i_ctime = current_time(dir);
     mark_inode_dirty(dir);
     return 0;
 }
@@ -567,7 +573,7 @@ vvsfs_create(struct mnt_idmap *namespace,
     }
 
     // create a new inode for the new file/directory
-    inode = vvsfs_new_inode(dir, mode);
+    inode = vvsfs_new_inode(dir, mode, 0);
     if (IS_ERR(inode)) {
         printk("vvsfs - create - new_inode error!");
         brelse(bh);
@@ -668,7 +674,7 @@ vvsfs_symlink(struct mnt_idmap *namespace,
     }
 
     // create a new inode for the new file/directory
-    inode = vvsfs_new_inode(dir, S_IFLNK | S_IRWXUGO);
+    inode = vvsfs_new_inode(dir, S_IFLNK | S_IRWXUGO, 0);
     if (IS_ERR(inode)) {
         printk("vvsfs - symlink - new_inode error!");
         brelse(bh);
@@ -697,6 +703,57 @@ vvsfs_symlink(struct mnt_idmap *namespace,
 
     // attach the new inode object to the VFS directory entry object.
     DEBUG_LOG("Symlink created %ld\n", inode->i_ino);
+    return 0;
+}
+
+// The "mknod" function
+// This is called when a new special file is created.
+static int vvsfs_mknod(struct user_namespace *mnt_userns,
+                       struct inode *dir,
+                       struct dentry *dentry,
+                       umode_t mode,
+                       dev_t rdev) {
+    int ret;
+    struct inode *inode;
+    struct vvsfs_inode_info *dir_info;
+    struct buffer_head *bh;
+
+    if (DEBUG)
+        printk("vvsfs - mknod : %s\n", dentry->d_name.name);
+
+    if (!old_valid_dev(rdev))
+        return -EINVAL;
+
+    if (dentry->d_name.len > VVSFS_MAXNAME) {
+        printk("vvsfs - mknod - file name too long");
+        return -ENAMETOOLONG;
+    }
+
+    dir_info = VVSFS_I(dir);
+    if (!dir_info) {
+        printk("vvsfs - mknod - vi_dir null!");
+        return -EINVAL;
+    }
+
+    // create a new inode for the new file/directory
+    inode = vvsfs_new_inode(dir, mode, rdev);
+    if (IS_ERR(inode)) {
+        printk("vvsfs - mknod - new_inode error!");
+        brelse(bh);
+        return -ENOSPC;
+    }
+
+    // add the file/directory to the parent directory's list
+    // of entries -- on disk.
+    ret = vvsfs_add_new_entry(dir, dentry, inode);
+    if (ret != 0) {
+        return ret;
+    }
+
+    // attach the new inode object to the VFS directory entry object.
+    d_instantiate(dentry, inode);
+
+    printk("vvsfs - mknod - created %ld\n", inode->i_ino);
     return 0;
 }
 
@@ -1240,6 +1297,7 @@ static struct inode_operations vvsfs_dir_inode_operations = {
     .rmdir = vvsfs_rmdir,
     .unlink = vvsfs_unlink,
     .symlink = vvsfs_symlink,
+    .mknod = vvsfs_mknod,
 };
 
 // This implements the super operation for writing a 'dirty' inode to disk
@@ -1284,6 +1342,7 @@ static int vvsfs_write_inode(struct inode *inode,
     disk_inode->i_ctime = inode->i_ctime.tv_sec;
     disk_inode->i_data_blocks_count = inode_info->i_db_count;
     disk_inode->i_links_count = inode->i_nlink;
+    disk_inode->i_rdev = inode->i_rdev;
     for (i = 0; i < VVSFS_N_BLOCKS; ++i)
         disk_inode->i_block[i] = inode_info->i_data[i];
 
@@ -1415,7 +1474,11 @@ struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino) {
     for (i = 0; i < VVSFS_N_BLOCKS; ++i)
         inode_info->i_data[i] = disk_inode->i_block[i];
 
-    if (S_ISDIR(inode->i_mode)) {
+    if (S_ISREG(inode->i_mode)) {
+        inode->i_op = &vvsfs_file_inode_operations;
+        inode->i_fop = &vvsfs_file_operations;
+        inode->i_mapping->a_ops = &vvsfs_as_operations;
+    } else if (S_ISDIR(inode->i_mode)) {
         inode->i_op = &vvsfs_dir_inode_operations;
         inode->i_fop = &vvsfs_dir_operations;
     } else if (S_ISLNK(inode->i_mode)) {
@@ -1424,9 +1487,8 @@ struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino) {
         inode_nohighmem(inode);
         inode->i_mapping->a_ops = &vvsfs_as_operations;
     } else {
-        inode->i_op = &vvsfs_file_inode_operations;
-        inode->i_fop = &vvsfs_file_operations;
-        inode->i_mapping->a_ops = &vvsfs_as_operations;
+        // special file
+        init_special_inode(inode, inode->i_mode, disk_inode->i_rdev);
     }
 
     brelse(bh);
