@@ -94,12 +94,12 @@ static uint32_t read_int_from_buffer(char *buf) {
     sb_bread((sb), vvsfs_get_data_block((offset)))
 #define READ_BLOCK(sb, vi, index) READ_BLOCK_OFF(sb, (vi)->i_data[(index)])
 #define READ_DENTRY_OFF(data, offset)                                          \
-    ((struct vvsfs_dir_entry *)((data) + (offset) * VVSFS_DENTRYSIZE))
+    ((struct vvsfs_dir_entry *)((data) + (offset)*VVSFS_DENTRYSIZE))
 #define READ_DENTRY(bh, offset) READ_DENTRY_OFF((bh)->b_data, offset)
 #define READ_INDIRECT_BLOCK(sb, indirect_bh, i)                                \
     READ_BLOCK_OFF(sb,                                                         \
                    read_int_from_buffer((indirect_bh)->b_data +                \
-                                        ((i) * VVSFS_INDIRECT_PTR_SIZE)))
+                                        ((i)*VVSFS_INDIRECT_PTR_SIZE)))
 
 // Avoid using char* as a byte array since some systems may have a 16 bit char
 // type this ensures that any system that has 8 bits = 1 byte will be valid for
@@ -2253,7 +2253,7 @@ static void vvsfs_put_super(struct super_block *sb) {
     }
 }
 
-static uint32_t count_free(uint8_t* map, uint32_t size) {
+static uint32_t count_free(uint8_t *map, uint32_t size) {
     int i;
     uint8_t j;
     uint32_t count = 0;
@@ -2274,10 +2274,10 @@ static uint32_t count_free(uint8_t* map, uint32_t size) {
 // https://elixir.bootlin.com/linux/v5.15.89/source/fs/ext2/super.c#L1407
 // for various stats that you need to provide.
 static int vvsfs_statfs(struct dentry *dentry, struct kstatfs *buf) {
-    LOG("vvsfs - statfs\n");
     struct super_block *sb;
     struct vvsfs_sb_info *i_sb;
     uint64_t id;
+    LOG("vvsfs - statfs\n");
     sb = dentry->d_sb;
     i_sb = sb->s_fs_info;
     // Retrieve the device id from the superblock device data
