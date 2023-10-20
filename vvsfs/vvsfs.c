@@ -72,10 +72,20 @@ static void write_int_to_buffer(char *buf, uint32_t data) {
  */
 static uint32_t read_int_from_buffer(char *buf) {
     uint32_t data = 0;
-    data |= ((uint32_t) buf[0]) << 24;
-    data |= ((uint32_t) buf[1]) << 16;
-    data |= ((uint32_t) buf[2]) << 8;
-    data |= (uint32_t)buf[3];
+    data |= ((uint32_t)buf[0]) << 24;
+    data |= ((uint32_t)buf[1]) << 16;
+    data |= ((uint32_t)buf[2]) << 8;
+    // Because some genius decided to use a char type to represent a byte in
+    // the struct buffer_head b_data field (yes thats a signed data type with
+    // potentially variable length of either 8 or 16 bits), we have to be very
+    // careful with reading signed data from the buffer. Because unsigned data
+    // will become signed. Yeah. Fun. I have no idea why they didnt use a
+    // uint8_t or arch specific intrinsic 8-bit sized type for a byte. Good
+    // thing that struct buffer_head is deprecated in favour of struct bio in
+    // linux >2.6 which DOES properly define an unsigned byte type for the
+    // internal buffer.
+    data |= ((uint32_t)buf[3]) & 0xF0;
+    DEBUG_LOG("read from buffer: %u\n", data);
     return data;
 }
 
@@ -263,6 +273,7 @@ static int vvsfs_file_get_block(struct inode *inode,
             DEBUG_LOG("vvsfs - file_get_block - failed to assign data block\n");
             return raw_dno;
         }
+        mark_inode_dirty(inode);
         dno = (uint32_t)raw_dno;
         inode->i_blocks = vi->i_db_count * VVSFS_BLOCKSIZE / VVSFS_SECTORSIZE;
         bno = vvsfs_get_data_block(dno);
