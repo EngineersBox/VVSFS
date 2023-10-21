@@ -2137,8 +2137,13 @@ static int vvsfs_rename(struct user_namespace *namespace,
     // If there already exists a file at the destination, we need to overwrite
     // the dentry to point to the source inode
     if (new_inode) {
-        vvsfs_dentry_exchange_inode(
+        err = vvsfs_dentry_exchange_inode(
             new_dir, new_dentry, new_inode, src_loc.dentry->inode_number);
+        if (err) {
+            DEBUG_LOG("vvsfs - rename - failed to exchange the inode of an "
+                      "existing dentry\n");
+            return err;
+        }
     } else {
         // Copy the dentry to the new location
         // Note this automatically checks to see if the directory is full
