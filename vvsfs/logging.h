@@ -1,3 +1,6 @@
+#ifndef VVSFS_LOGGING_H
+#define VVSFS_LOGGING_H
+
 #define DEBUG 1
 #define LOG_FILE_PATH 0
 
@@ -21,3 +24,5 @@
 #else
 #define DEBUG_LOG(msg, ...) ({})
 #endif
+
+#endif // VVSFS_LOGGING_H

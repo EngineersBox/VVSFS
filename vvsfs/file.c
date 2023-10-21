@@ -19,9 +19,11 @@
 // File operations; leave as is. We are using the generic VFS implementations
 // to take care of read/write/seek/fsync. The read/write operations rely on the
 // address space operations, so there's no need to modify these.
-static const struct file_operations vvsfs_file_operations = {
+const struct file_operations vvsfs_file_operations = {
     .llseek = generic_file_llseek,
     .fsync = generic_file_fsync,
     .read_iter = generic_file_read_iter,
     .write_iter = generic_file_write_iter,
 };
+
+const struct inode_operations vvsfs_file_inode_operations = {};

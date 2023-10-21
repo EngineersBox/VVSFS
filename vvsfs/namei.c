@@ -14,9 +14,10 @@
 #include <linux/types.h>
 #include <linux/version.h>
 
-#include "buffer_utils.h"
-#include "logging.h"
 #include "vvsfs.h"
+#include "logging.h"
+
+struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino);
 
 /* Find a dentry within a given block by name
  * (returned through parameter)
@@ -213,7 +214,7 @@ static int vvsfs_find_entry_indirect(struct vvsfs_inode_info *vi,
  * @return: (int): 0 if found, 1 if not found,
  * otherwise and error
  */
-static int vvsfs_find_entry(struct inode *dir,
+int vvsfs_find_entry(struct inode *dir,
                             struct dentry *dentry,
                             unsigned flags,
                             struct bufloc_t *out_loc) {
@@ -657,7 +658,7 @@ static int vvsfs_delete_entry_bufloc(struct inode *dir,
  *
  * @return: (int) 0 if successful, error otherwise
  */
-static int vvsfs_free_inode_blocks(struct inode *inode) {
+int vvsfs_free_inode_blocks(struct inode *inode) {
     struct super_block *sb;
     struct vvsfs_sb_info *i_sb;
     struct vvsfs_inode_info *vi;
@@ -1360,6 +1361,102 @@ static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
     return err;
 }
 
+/* Determine if the dentry contains only reserved
+ * entries
+ *
+ * @bh: Data block buffer
+ * @dentry_count: Number of dentries in this block
+ *
+ * @return (int): 0 if there is a non-reserved entry
+ * in any dentry, 1 otherwise
+ */
+static int vvsfs_dir_only_reserved(struct buffer_head *bh,
+                                   struct inode *dir,
+                                   int dentry_count) {
+    struct vvsfs_dir_entry *dentry;
+    char *name;
+    uint32_t inumber;
+    int d;
+    for (d = 0; d < dentry_count; d++) {
+        // Access the current dentry
+        dentry = READ_DENTRY(bh, d);
+        name = dentry->name;
+        inumber = dentry->inode_number;
+        if (IS_NON_RESERVED_DENTRY(name, inumber, dir)) {
+            // If the dentry is not '.' or '..' (given
+            // that the second case matches the inode
+            // to the parent), then this is not empty
+            DEBUG_LOG("vvsfs - dir_only_reserved - "
+                      "non-reserved entry: name: "
+                      "%s inumber: %u\n",
+                      name,
+                      inumber);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Determine if a given directory is empty (has only
+ * reserved entries)
+ *
+ * @dir: Target directory inode
+ *
+ * @return: (int) 1 if true, 0 otherwise
+ */
+static int vvsfs_empty_dir(struct inode *dir) {
+    struct vvsfs_inode_info *vi;
+    struct buffer_head *bh;
+    int i;
+    int last_block_dentry_count;
+    int current_block_dentry_count;
+    DEBUG_LOG("vvsfs - empty_dir\n");
+
+    // Check that this is actually a directory
+    if (!S_ISDIR(dir->i_mode)) {
+        DEBUG_LOG("vvsfs - empty_dir - not actually a directory\n");
+        return -ENOTDIR;
+    }
+
+    // Retrieve vvsfs specific inode data from dir inode
+    vi = VVSFS_I(dir);
+    LAST_BLOCK_DENTRY_COUNT(dir, last_block_dentry_count);
+    // Retrieve superblock object for R/W to disk
+    // blocks
+    DEBUG_LOG("vvsfs - empty_dir - number of blocks "
+              "to read %d\n",
+              vi->i_db_count);
+    // Progressively load datablocks into memory and
+    // check dentries
+    for (i = 0; i < vi->i_db_count; i++) {
+        LOG("vvsfs - empty_dir - reading dno: %d, "
+            "disk block: %d\n",
+            vi->i_data[i],
+            vvsfs_get_data_block(vi->i_data[i]));
+        bh = READ_BLOCK(dir->i_sb, vi, i);
+        if (!bh) {
+            // Buffer read failed, no more data when
+            // we expected some
+            DEBUG_LOG("vvsfs - empty_dir - buffer "
+                      "read failed\n");
+            return -EIO;
+        }
+        current_block_dentry_count = i == vi->i_db_count - 1
+                                         ? last_block_dentry_count
+                                         : VVSFS_N_DENTRY_PER_BLOCK;
+        // Check if there are any non-reserved
+        // dentries
+        if (!vvsfs_dir_only_reserved(bh, dir, current_block_dentry_count)) {
+            brelse(bh);
+            DEBUG_LOG("vvsfs - empty_dir - done (false)\n");
+            return 0;
+        }
+        brelse(bh);
+    }
+    DEBUG_LOG("vvsfs - empty_dir - done (true)\n");
+    return 1;
+}
+
 /* Remove a given entry from a given directory
  *
  * @dir: Inode representation of directory to remove
@@ -1502,6 +1599,57 @@ static int vvsfs_mknod(struct user_namespace *mnt_userns,
 }
 
 /**
+ * Given a dentry, exchange which inode the dentry points to
+ * @dir: the parent directory which contains the dentry
+ * @dentry: target dentry to update the inode number of
+ * @existing_inode: the inode which the dentry currently points to
+ *      Note: the link count and modification time of this inode will be updated
+ * @replacement_inode_no: the new inode number to store in the dentry
+ *
+ * It is the responsibility of the calling function to update the link count
+ * of the replacement inode depending on the circumstance (e.g. mv, link)
+ */
+static int vvsfs_dentry_exchange_inode(struct inode *dir,
+                                       struct dentry *dentry,
+                                       struct inode *existing_inode,
+                                       uint32_t replacement_inode_no) {
+    int err;
+    struct bufloc_t loc;
+
+    // Get the vvsfs representation of the dentry
+    err = vvsfs_find_entry(
+        dir, dentry, BL_PERSIST_BUFFER | BL_PERSIST_DENTRY, &loc);
+    if (err) {
+        DEBUG_LOG("vvsfs - exchange_inode - failed to find new dentry\n");
+        return -ENOENT;
+    }
+
+    // Update the dentry to point to the new inode
+    loc.dentry->inode_number = replacement_inode_no;
+    mark_buffer_dirty(loc.bh);
+    // We sync this data to disk now. Although another dentry may also point to
+    // this inode, that is better than potentially having a point in time where
+    // this dentry is not pointing to any inode
+    sync_dirty_buffer(loc.bh);
+    brelse(loc.bh);
+
+    // We have changed a dentry, so update the parent directory time stats
+    dir->i_mtime = dir->i_ctime = current_time(dir);
+    mark_inode_dirty(dir);
+
+    // Drop the link count of the inode that was originally pointed to by this
+    // dentry, so that it can possibly be deleted
+    existing_inode->i_ctime = current_time(existing_inode);
+    DEBUG_LOG("vvsfs - rename - new_inode link count before: %u\n",
+              existing_inode->i_nlink);
+    inode_dec_link_count(existing_inode);
+    DEBUG_LOG("vvsfs - rename - new_inode link count after: %u\n",
+              existing_inode->i_nlink);
+    mark_inode_dirty(existing_inode);
+    return 0;
+}
+
+/**
  * Rename old_dentry to new_dentry
  */
 static int vvsfs_rename(struct user_namespace *namespace,
@@ -1617,7 +1765,7 @@ static int vvsfs_rename(struct user_namespace *namespace,
     return 0;
 }
 
-static struct inode_operations vvsfs_dir_inode_operations = {
+const struct inode_operations vvsfs_dir_inode_operations = {
     .create = vvsfs_create,
     .lookup = vvsfs_lookup,
     .mkdir = vvsfs_mkdir,
@@ -1629,6 +1777,6 @@ static struct inode_operations vvsfs_dir_inode_operations = {
     .rename = vvsfs_rename,
 };
 
-static const struct inode_operations vvsfs_symlink_inode_operations = {
+const struct inode_operations vvsfs_symlink_inode_operations = {
     .get_link = page_get_link,
 };

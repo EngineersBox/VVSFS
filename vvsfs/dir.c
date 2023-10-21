@@ -15,7 +15,6 @@
 #include <linux/version.h>
 
 #include "vvsfs.h"
-#include "buffer_utils.h"
 #include "logging.h"
 
 // vvsfs_readdir - reads a directory and places the result using filldir, cached
@@ -57,7 +56,7 @@ static int vvsfs_readdir(struct file *filp, struct dir_context *ctx) {
     return 0;
 }
 
-static const struct file_operations vvsfs_dir_operations = {
+const struct file_operations vvsfs_dir_operations = {
     .llseek = generic_file_llseek,
     .read = generic_read_dir,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)

@@ -1,3 +1,6 @@
+#ifndef VVSFS_H
+#define VVSFS_H
+
 #define VVSFS_BLOCKSIZE 1024 // filesystem blocksize
 #define VVSFS_SECTORSIZE 512 // disk sector size
 #define VVSFS_INODESIZE 256  // inode size
@@ -20,14 +23,33 @@
 #define VVSFS_MAX_INODE_ENTRIES (VVSFS_IMAP_SIZE * VVSFS_IMAP_INODES_PER_ENTRY)
 #define VVSFS_MAX_DENTRIES ((VVSFS_N_DENTRY_PER_BLOCK * VVSFS_MAX_INODE_BLOCKS))
 #define VVSFS_MAXFILESIZE ((VVSFS_BLOCKSIZE * VVSFS_MAX_INODE_BLOCKS))
-#define true 1
-#define false 0
-#define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
 #ifdef __KERNEL__
+#include <asm/uaccess.h>
+#include <linux/blkdev.h>
+#include <linux/buffer_head.h>
+#include <linux/errno.h>
+#include <linux/fs.h>
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/mm.h>
+#include <linux/module.h>
+#include <linux/mpage.h>
+#include <linux/proc_fs.h>
+#include <linux/slab.h>
+#include <linux/statfs.h>
 #include <linux/types.h>
+#include <linux/version.h>
 #else
 #include <stdint.h>
+#include <string.h>
+#endif
+
+#ifndef true
+#define true 1
+#endif
+#ifndef false
+#define false 0
 #endif
 
 /*
@@ -97,7 +119,6 @@ struct vvsfs_dir_entry {
         ((name)[0] != '.' || (!(name)[1] && (inumber) != (inode)->i_ino) ||    \
          (name)[1] != '.' || (name)[2])
 
-#define __KERNEL__
 #ifdef __KERNEL__
 
 #define VVSFS_SET_MAP_BIT 0x80
@@ -114,6 +135,78 @@ extern const struct inode_operations vvsfs_symlink_inode_operations;
 // type this ensures that any system that has 8 bits = 1 byte will be valid for
 // byte array usage irrespective of char sizing.
 typedef uint8_t *bytearray_t;
+
+// A "container" structure that keeps the VFS inode and additional on-disk data.
+struct vvsfs_inode_info {
+    uint32_t i_db_count;             /* Data blocks count */
+    uint32_t i_data[VVSFS_N_BLOCKS]; /* Pointers to blocks */
+    struct inode vfs_inode;
+};
+
+struct vvsfs_sb_info {
+    uint64_t nblocks; /* max supported blocks */
+    uint64_t ninodes; /* max supported inodes */
+    uint8_t *imap; /* inode blocks map */
+    uint8_t *dmap; /* data blocks map  */
+};
+
+/* Representation of a location of a dentry within
+ * the data blocks.
+ */
+struct __attribute__((packed)) bufloc_t {
+    int b_index;                    // Data block index
+    int d_index;                    // Dentry index within data block
+    unsigned flags;                 // Flags used to construct instance
+    struct buffer_head *bh;         // Data block
+    struct vvsfs_dir_entry *dentry; // Matched entry
+};
+
+/* Compare the names of dentries, checks length before comparing
+ * name character entries.
+ *
+ * @name: Dentry name to compare against
+ * @target_name: Dentry name that is being searched for
+ * @target_name_len: Length of target_name string
+ *
+ * @return (int) 1 if names match, 0 otherwise
+ */
+__attribute__((always_inline)) static inline bool
+namecmp(const char *name, const char *target_name, int target_name_len) {
+    return strlen(name) == target_name_len &&
+           strncmp(name, target_name, target_name_len) == 0;
+}
+
+/* Persist the struct buffer_head object in bufloc_t
+ * without releasing it */
+#define BL_PERSIST_BUFFER (1 << 1)
+/* Persist (not clone) the struct vvsfs_dir_entry
+ * object in bufloc_t, dependent on BL_PERSIST_BUFFER
+ */
+#define BL_PERSIST_DENTRY (1 << 2)
+/* Determine if a given flag is set */
+#define bl_flag_set(flags, flag) ((flags) & (flag))
+
+/* Resolves the buffer head and dentry for a given
+ * bufloc if they have not already been. This
+ * behaviour is conditional on the flags set.
+ *
+ * Note that the user is expected to release the
+ * buffer_head (bh field) with brelse(bufloc->bh) when
+ * this bufloc_t instance is not longer needed. Since
+ * the dentry field is constructed from the memory
+ * held in the buffer_head data, it is no necessery to
+ * release the dentry field.
+ *
+ * @dir: Target directory inode
+ * @vi: Inode information for target directory inode
+ * @bufloc: Specification of dentry location (does not
+ * assume already resolved)
+ *
+ * @return: (int) 0 if successful, error otherwise
+ */
+extern int vvsfs_resolve_bufloc(struct inode *dir,
+                         struct vvsfs_inode_info *vi,
+                         struct bufloc_t *bufloc);
 
 /* Calculate the data block map index for a given position
  * within the given inode data blocks.
@@ -143,6 +236,35 @@ extern int vvsfs_assign_data_block(struct vvsfs_inode_info *dir_info,
                                    struct super_block *sb,
                                    uint32_t d_pos);
 
+/* Find a given entry within the given directory inode
+ *
+ * @dir: Inode representation of directory to search
+ * @dentry: Target dentry (name, length, etc)
+ * @flags: Behavioural flags for bufloc_t data
+ * @out_loc: Returned data for location of entry if
+ * found
+ *
+ * @return: (int): 0 if found, 1 if not found,
+ * otherwise and error
+ */
+extern int vvsfs_find_entry(struct inode *dir,
+                     struct dentry *dentry,
+                     unsigned flags,
+                     struct bufloc_t *out_loc);
+
+// Fill the super_block structure with information
+// specific to vvsfs
+int vvsfs_fill_super(struct super_block *s, void *data, int silent);
+
+/* Free all data blocks in a given inode
+ *
+ * @inode: Target inode to free all indirect and direct
+ *         data blocks
+ *
+ * @return: (int) 0 if successful, error otherwise
+ */
+extern int vvsfs_free_inode_blocks(struct inode *inode);
+
 // vvsfs_read_dentries - reads all dentries into memory for a given inode
 //
 // @dir: Directory inode to read from
@@ -154,6 +276,17 @@ extern int vvsfs_assign_data_block(struct vvsfs_inode_info *dir_info,
 //          *MUST* be freed after use via `kfree(data)`
 extern bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs);
 
+// vvsfs_iget - get the inode from the super block
+// This function will either return the inode that
+// corresponds to a given inode number (ino), if it's
+// already in the cache, or create a new inode object,
+// if it's not in the cache. Note that this is very
+// similar to vvsfs_new_inode, except that the
+// requested inode is supposed to be allocated on-disk
+// already. So don't use this to create a completely
+// new inode that has not been allocated on disk.
+extern struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino);
+
 // vvsfs_find_free_block
 // @map:  the bitmap that keeps track of free blocks
 // @size: the size of the bitmap.
@@ -164,7 +297,6 @@ extern bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs);
 // is returned, and the bitmap is updated. On failure, the function returns 0
 // and leave the bitmap unchanged. NOTE: the position returned is relative to
 // the start of the map, so it is *not* the actual location on disk.
-
 static uint32_t vvsfs_find_free_block(uint8_t *map, uint32_t size) {
     int i = 0;
     uint8_t j = 0;
@@ -201,55 +333,63 @@ static void vvsfs_free_block(uint8_t *map, uint32_t pos) {
 // On success, this function returns a valid inode number and update the
 // corresponding inode bitmap. On failure, it will return 0 (which is an invalid
 // inode number), and leave the bitmap unchanged.
-static uint32_t vvsfs_reserve_inode_block(uint8_t *map) {
+static inline uint32_t vvsfs_reserve_inode_block(uint8_t *map) {
     uint32_t i = vvsfs_find_free_block(map, VVSFS_IMAP_SIZE);
     if (i == 0)
         return 0;
     return BNO_TO_INO(i);
 }
 
-static void vvsfs_free_inode_block(uint8_t *map, uint32_t ino) {
+__attribute__((always_inline))
+static inline void vvsfs_free_inode_block(uint8_t *map, uint32_t ino) {
     vvsfs_free_block(map, INO_TO_BNO(ino));
 }
 
-static uint32_t vvsfs_reserve_data_block(uint8_t *map) {
+__attribute__((always_inline))
+static inline uint32_t vvsfs_reserve_data_block(uint8_t *map) {
     return vvsfs_find_free_block(map, VVSFS_DMAP_SIZE);
 }
 
-static void vvsfs_free_data_block(uint8_t *map, uint32_t dno) {
+__attribute__((always_inline))
+static inline void vvsfs_free_data_block(uint8_t *map, uint32_t dno) {
     vvsfs_free_block(map, dno);
 }
 
 // get the disk block number for a given inode number
-uint32_t vvsfs_get_inode_block(unsigned long ino) {
+__attribute__((always_inline))
+static inline uint32_t vvsfs_get_inode_block(unsigned long ino) {
     return (VVSFS_INODE_BLOCK_OFF + INO_TO_BNO(ino) / VVSFS_N_INODE_PER_BLOCK);
 }
 
 // inode offset (in bytes) relative to the start of the block
-uint32_t vvsfs_get_inode_offset(unsigned long ino) {
+__attribute__((always_inline))
+static inline uint32_t vvsfs_get_inode_offset(unsigned long ino) {
     return (INO_TO_BNO(ino) % VVSFS_N_INODE_PER_BLOCK) * VVSFS_INODESIZE;
 }
 
 // get the disk block number for a given logical data block number
-uint32_t vvsfs_get_data_block(uint32_t bno) {
+__attribute__((always_inline))
+static inline uint32_t vvsfs_get_data_block(uint32_t bno) {
     return VVSFS_DATA_BLOCK_OFF + bno;
 }
 
 // A macro to extract a vvsfs_inode_info object from a VFS inode.
 #define VVSFS_I(inode) (container_of(inode, struct vvsfs_inode_info, vfs_inode))
 
-// A "container" structure that keeps the VFS inode and additional on-disk data.
-struct vvsfs_inode_info {
-    uint32_t i_db_count;             /* Data blocks count */
-    uint32_t i_data[VVSFS_N_BLOCKS]; /* Pointers to blocks */
-    struct inode vfs_inode;
-};
+extern uint32_t vvsfs_get_data_block(uint32_t bno);
+extern void write_int_to_buffer(char *buf, uint32_t data);
+extern uint32_t read_int_from_buffer(char *buf);
 
-struct vvsfs_sb_info {
-    uint64_t nblocks; /* max supported blocks */
-    uint64_t ninodes; /* max supported inodes */
-    uint8_t *imap; /* inode blocks map */
-    uint8_t *dmap; /* data blocks map  */
-};
+#define READ_BLOCK_OFF(sb, offset)                                             \
+    sb_bread((sb), vvsfs_get_data_block((offset)))
+#define READ_BLOCK(sb, vi, index) READ_BLOCK_OFF(sb, (vi)->i_data[(index)])
+#define READ_DENTRY_OFF(data, offset)                                          \
+    ((struct vvsfs_dir_entry *)((data) + (offset)*VVSFS_DENTRYSIZE))
+#define READ_DENTRY(bh, offset) READ_DENTRY_OFF((bh)->b_data, offset)
+#define READ_INDIRECT_BLOCK(sb, indirect_bh, i)                                \
+    READ_BLOCK_OFF(sb,                                                         \
+                   read_int_from_buffer((indirect_bh)->b_data +                \
+                                        ((i)*VVSFS_INDIRECT_PTR_SIZE)))
 
 #endif
+#endif // VVSFS_H
