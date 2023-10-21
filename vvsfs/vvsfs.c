@@ -2094,7 +2094,7 @@ static int vvsfs_write_inode(struct inode *inode,
     brelse(bh);
 
     // LOG("vvsfs - write_inode done: %ld\n", inode->i_ino);
-    return VVSFS_BLOCKSIZE;
+    return 0;
 }
 
 // This function is needed to initiate the inode
