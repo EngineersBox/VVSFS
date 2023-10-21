@@ -1,7 +1,10 @@
 #!/bin/bash
 
-./generate_env.sh
+set -e # Exit on error
 
-for test in test_*.sh; do
-    ./$test
+./generate_env.sh
+source vvsfs_env.sh
+
+for file in test_*.sh; do
+    ./$file
 done

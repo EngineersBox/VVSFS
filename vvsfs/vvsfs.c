@@ -571,7 +571,7 @@ vvsfs_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags) {
     const char *target_name;
     int target_name_len;
     bytearray_t data;
-    target_name = dentry->d_name.name;
+    target_name = (char *)dentry->d_name.name;
     target_name_len = dentry->d_name.len;
     DEBUG_LOG("vvsfs - lookup\n");
     if (dentry->d_name.len > VVSFS_MAXNAME) {
@@ -812,9 +812,7 @@ static int vvsfs_add_new_entry(struct inode *dir,
 
     dir->i_size = (num_dirs + 1) * VVSFS_DENTRYSIZE;
     dir->i_blocks = dir_info->i_db_count * (VVSFS_BLOCKSIZE / VVSFS_SECTORSIZE);
-
-    // update time for posix compliance
-    dir->i_atime = dir->i_mtime = dir->i_ctime = current_time(dir);
+    dir->i_ctime = dir->i_mtime = current_time(dir);
     mark_inode_dirty(dir);
     return 0;
 }
@@ -1932,8 +1930,14 @@ static int vvsfs_empty_dir(struct inode *dir) {
     int last_block_dentry_count;
     int current_block_dentry_count;
     DEBUG_LOG("vvsfs - empty_dir\n");
-    // Retrieve vvsfs specific inode data from dir
-    // inode
+
+    // Check that this is actually a directory
+    if (!S_ISDIR(dir->i_mode)) {
+        DEBUG_LOG("vvsfs - empty_dir - not actually a directory\n");
+        return -ENOTDIR;
+    }
+
+    // Retrieve vvsfs specific inode data from dir inode
     vi = VVSFS_I(dir);
     LAST_BLOCK_DENTRY_COUNT(dir, last_block_dentry_count);
     // Retrieve superblock object for R/W to disk
@@ -1998,11 +2002,176 @@ static int vvsfs_rmdir(struct inode *dir, struct dentry *dentry) {
     return err;
 }
 
-// File operations; leave as is. We are using the
-// generic VFS implementations to take care of
-// read/write/seek/fsync. The read/write operations
-// rely on the address space operations, so there's no
-// need to modify these.
+/**
+ * Given a dentry, exchange which inode the dentry points to
+ * @dir: the parent directory which contains the dentry
+ * @dentry: target dentry to update the inode number of
+ * @existing_inode: the inode which the dentry currently points to
+ *      Note: the link count and modification time of this inode will be updated
+ * @replacement_inode_no: the new inode number to store in the dentry
+ *
+ * It is the responsibility of the calling function to update the link count
+ * of the replacement inode depending on the circumstance (e.g. mv, link)
+ */
+static int vvsfs_dentry_exchange_inode(struct inode *dir,
+                                       struct dentry *dentry,
+                                       struct inode *existing_inode,
+                                       uint32_t replacement_inode_no) {
+    int err;
+    struct bufloc_t loc;
+
+    // Get the vvsfs representation of the dentry
+    err = vvsfs_find_entry(
+        dir, dentry, BL_PERSIST_BUFFER | BL_PERSIST_DENTRY, &loc);
+    if (err) {
+        DEBUG_LOG("vvsfs - exchange_inode - failed to find new dentry\n");
+        return -ENOENT;
+    }
+
+    // Update the dentry to point to the new inode
+    loc.dentry->inode_number = replacement_inode_no;
+    mark_buffer_dirty(loc.bh);
+    // We sync this data to disk now. Although another dentry may also point to
+    // this inode, that is better than potentially having a point in time where
+    // this dentry is not pointing to any inode
+    sync_dirty_buffer(loc.bh);
+    brelse(loc.bh);
+
+    // We have changed a dentry, so update the parent directory time stats
+    dir->i_mtime = dir->i_ctime = current_time(dir);
+    mark_inode_dirty(dir);
+
+    // Drop the link count of the inode that was originally pointed to by this
+    // dentry, so that it can possibly be deleted
+    existing_inode->i_ctime = current_time(existing_inode);
+    DEBUG_LOG("vvsfs - rename - new_inode link count before: %u\n",
+              existing_inode->i_nlink);
+    inode_dec_link_count(existing_inode);
+    DEBUG_LOG("vvsfs - rename - new_inode link count after: %u\n",
+              existing_inode->i_nlink);
+    mark_inode_dirty(existing_inode);
+    return 0;
+}
+
+/**
+ * Rename old_dentry to new_dentry
+ */
+static int vvsfs_rename(struct user_namespace *namespace,
+                        struct inode *old_dir,
+                        struct dentry *old_dentry,
+                        struct inode *new_dir,
+                        struct dentry *new_dentry,
+                        unsigned int flags) {
+    int err;
+    struct bufloc_t src_loc;
+    struct inode *old_inode = d_inode(old_dentry);
+    struct inode *new_inode = d_inode(new_dentry);
+
+    DEBUG_LOG("vvsfs - rename\n");
+
+    // We fail if any of these flags are used, because ext2 doesn't handle them
+    // either. See this Ed post:
+    // https://edstem.org/au/courses/12685/discussion/1652085?comment=3689645
+    if (flags & (RENAME_EXCHANGE | RENAME_WHITEOUT)) {
+        DEBUG_LOG("vvsfs - rename - RENAME_EXCHANGE or RENAME_WHITEOUT not "
+                  "supported\n");
+        return -EINVAL;
+    }
+
+    // From the man page: If  oldpath and newpath are existing hard links
+    // referring to the same file, then rename() does nothing, and returns a
+    // success status.
+    if (new_inode && new_inode->i_ino == old_inode->i_ino) {
+        DEBUG_LOG("vvsfs - rename - old and new are hard links to same file\n");
+        return 0;
+    }
+
+    // Check the filename isn't too long
+    if (new_dentry->d_name.len > VVSFS_MAXNAME) {
+        DEBUG_LOG("vvsfs - rename - file name too long");
+        return -ENAMETOOLONG;
+    }
+
+    // From the man page:
+    // RENAME_NOREPLACE: Don't  overwrite  newpath  of the rename.  Return an
+    // error if newpath already exists.
+    if (new_inode && (flags & RENAME_NOREPLACE)) {
+        return -EEXIST;
+    }
+
+    // From the man page: oldpath can specify a directory.  In this case,
+    // newpath must either not exist, or it must specify an empty directory
+    if (new_inode && S_ISDIR(old_inode->i_mode)) {
+        // Destination is a non-empty directory
+        if (S_ISDIR(new_inode->i_mode) && !vvsfs_empty_dir(new_inode)) {
+            DEBUG_LOG(
+                "vvsfs - rename - target exists and is non-empty directory\n");
+            return -ENOTEMPTY;
+        }
+
+        // Destination is a file of any sort
+        if (!S_ISDIR(new_inode->i_mode)) {
+            DEBUG_LOG("vvsfs - rename - cannot overwrite non-directory with "
+                      "directory\n");
+            return -ENOTDIR;
+        }
+    }
+
+    // From the Linux Programming Interface book, section 18.4:
+    // If oldpath refers to a file other than a directory, then newpath can't
+    // specify the pathname of a directory
+    if (!S_ISDIR(old_inode->i_mode) && new_inode &&
+        S_ISDIR(new_inode->i_mode)) {
+        DEBUG_LOG("vvsfs - rename - cannot overwrite directory with file\n");
+        return -EISDIR;
+    }
+
+    // Find the original dentry for the file
+    err = vvsfs_find_entry(
+        old_dir, old_dentry, BL_PERSIST_BUFFER | BL_PERSIST_DENTRY, &src_loc);
+    if (err) {
+        DEBUG_LOG("vvsfs - rename - failed to find entry\n");
+        return -ENOENT;
+    }
+
+    // If there already exists a file at the destination, we need to overwrite
+    // the dentry to point to the source inode
+    if (new_inode) {
+        err = vvsfs_dentry_exchange_inode(
+            new_dir, new_dentry, new_inode, src_loc.dentry->inode_number);
+        if (err) {
+            DEBUG_LOG("vvsfs - rename - failed to exchange the inode of an "
+                      "existing dentry\n");
+            return err;
+        }
+    } else {
+        // Copy the dentry to the new location
+        // Note this automatically checks to see if the directory is full
+        err = vvsfs_add_new_entry(new_dir, new_dentry, old_inode);
+        if (err) {
+            DEBUG_LOG(
+                "vvsfs - rename - failed to create dentry in new location\n");
+            brelse(src_loc.bh);
+            return err;
+        }
+    }
+
+    mark_inode_dirty(old_inode);
+
+    // Delete the dentry from the old position
+    err = vvsfs_delete_entry_bufloc(old_dir, &src_loc);
+    if (err) {
+        DEBUG_LOG("vvsfs - rename - failed to delete entry\n");
+        return err;
+    }
+
+    DEBUG_LOG("vvsfs - rename - done\n");
+    return 0;
+}
+
+// File operations; leave as is. We are using the generic VFS implementations
+// to take care of read/write/seek/fsync. The read/write operations rely on the
+// address space operations, so there's no need to modify these.
 static struct file_operations vvsfs_file_operations = {
     .llseek = generic_file_llseek,
     .fsync = generic_file_fsync,
@@ -2034,6 +2203,7 @@ static struct inode_operations vvsfs_dir_inode_operations = {
     .unlink = vvsfs_unlink,
     .symlink = vvsfs_symlink,
     .mknod = vvsfs_mknod,
+    .rename = vvsfs_rename,
 };
 
 // This implements the super operation for writing a
