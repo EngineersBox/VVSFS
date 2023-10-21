@@ -17,10 +17,6 @@
 #include "vvsfs.h"
 #include "logging.h"
 
-// inode cache -- this is used to attach vvsfs specific inode
-// data to the vfs inode
-static struct kmem_cache *vvsfs_inode_cache;
-
 struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino);
 
 // This implements the super operation for writing a

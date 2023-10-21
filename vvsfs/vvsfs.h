@@ -123,6 +123,7 @@ struct vvsfs_dir_entry {
 
 #define VVSFS_SET_MAP_BIT 0x80
 
+// Operations
 extern const struct address_space_operations vvsfs_as_operations;
 extern const struct inode_operations vvsfs_file_inode_operations;
 extern const struct file_operations vvsfs_file_operations;
@@ -130,6 +131,10 @@ extern const struct inode_operations vvsfs_dir_inode_operations;
 extern const struct file_operations vvsfs_dir_operations;
 extern const struct super_operations vvsfs_ops;
 extern const struct inode_operations vvsfs_symlink_inode_operations;
+
+// inode cache -- this is used to attach vvsfs specific inode
+// data to the vfs inode
+extern struct kmem_cache *vvsfs_inode_cache;
 
 // Avoid using char* as a byte array since some systems may have a 16 bit char
 // type this ensures that any system that has 8 bits = 1 byte will be valid for
@@ -254,7 +259,7 @@ extern int vvsfs_find_entry(struct inode *dir,
 
 // Fill the super_block structure with information
 // specific to vvsfs
-int vvsfs_fill_super(struct super_block *s, void *data, int silent);
+extern int vvsfs_fill_super(struct super_block *s, void *data, int silent);
 
 /* Free all data blocks in a given inode
  *
