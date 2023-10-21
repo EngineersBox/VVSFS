@@ -2344,7 +2344,7 @@ static int vvsfs_fill_super(struct super_block *s, void *data, int silent) {
     /* Set max supported blocks */
     sbi->nblocks = VVSFS_MAXBLOCKS;
     /* Set max supported inodes */
-    sbi->ninodes = VVSFS_IMAP_SIZE * VVSFS_N_DENTRY_PER_BLOCK;
+    sbi->ninodes = VVSFS_MAX_INODE_ENTRIES;
 
     /* Load the inode map */
     sbi->imap = kzalloc(VVSFS_IMAP_SIZE, GFP_KERNEL);

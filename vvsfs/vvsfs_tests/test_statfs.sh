@@ -32,7 +32,7 @@ check_log_success "Free block count correct"
 assert_eq "$(stat -f -c %a testdir)" "16270" "non-superuser free block count incorrect"
 check_log_success "Non-superuser free block count correct"
 # Total inodes %c
-assert_eq "$(stat -f -c %c testdir)" "$((VVSFS_IMAP_SIZE * VVSFS_N_DENTRY_PER_BLOCK))" "total inode count incorrect"
+assert_eq "$(stat -f -c %c testdir)" "$VVSFS_MAX_INODE_ENTRIES" "total inode count incorrect"
 check_log_success "Total inode count correct"
 # Free inodes %d
 assert_eq "$(stat -f -c %d testdir)" "3994" "free inode count incorrect"
@@ -65,7 +65,7 @@ check_log_success "Free block count correct after remount"
 assert_eq "$(stat -f -c %a testdir)" "16270" "non-superuser free block count incorrect after remount"
 check_log_success "Non-superuser free block count correct after remount"
 # Total inodes %c
-assert_eq "$(stat -f -c %c testdir)" "$((VVSFS_IMAP_SIZE * VVSFS_N_DENTRY_PER_BLOCK))" "total inode count incorrect after remount"
+assert_eq "$(stat -f -c %c testdir)" "$VVSFS_MAX_INODE_ENTRIES" "total inode count incorrect after remount"
 check_log_success "Total inode count correct after remount"
 # Free inodes %d
 assert_eq "$(stat -f -c %d testdir)" "3994" "free inode count incorrect after remount"
