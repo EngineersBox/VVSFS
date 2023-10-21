@@ -2015,6 +2015,15 @@ static int vvsfs_rename(struct user_namespace *namespace,
 
     DEBUG_LOG("vvsfs - rename\n");
 
+    // We fail if any of these flags are used, because ext2 doesn't handle them
+    // either. See this Ed post:
+    // https://edstem.org/au/courses/12685/discussion/1652085?comment=3689645
+    if (flags & (RENAME_EXCHANGE | RENAME_WHITEOUT)) {
+        DEBUG_LOG("vvsfs - rename - RENAME_EXCHANGE or RENAME_WHITEOUT not "
+                  "supported\n");
+        return -EINVAL;
+    }
+
     // From the man page: If  oldpath and newpath are existing hard links
     // referring to the same file, then rename() does nothing, and returns a
     // success status.
@@ -2037,9 +2046,8 @@ static int vvsfs_rename(struct user_namespace *namespace,
         goto out_err;
     }
 
-    // From the man page: oldpath can specify a
-    // directory.  In this case, newpath must either not exist, or it must
-    // specify an empty directory
+    // From the man page: oldpath can specify a directory.  In this case,
+    // newpath must either not exist, or it must specify an empty directory
     if (new_inode && S_ISDIR(old_inode->i_mode)) {
         // Destination is a non-empty directory
         if (S_ISDIR(new_inode->i_mode) && !vvsfs_empty_dir(new_inode)) {
