@@ -2077,26 +2077,6 @@ static int vvsfs_rename(struct user_namespace *namespace,
         goto out_err;
     }
 
-    // Check if we are simply renaming a file in the same directory
-    if (new_dir == old_dir) {
-        // Update the name of the file directly within the dentry
-        strncpy(src_loc.dentry->name,
-                new_dentry->d_name.name,
-                new_dentry->d_name.len);
-        src_loc.dentry->name[new_dentry->d_name.len] = '\0';
-
-        // Persist the changes
-        mark_buffer_dirty(src_loc.bh);
-        sync_dirty_buffer(src_loc.bh);
-        brelse(src_loc.bh);
-
-        // Update parent dir metadata
-        new_dir->i_ctime = new_dir->i_mtime = current_time(new_dir);
-        mark_inode_dirty(new_dir);
-
-        return 0;
-    }
-
     // If there already exists a file at the destination, we need to overwrite
     // the dentry to point to the source inode
     if (new_inode) {

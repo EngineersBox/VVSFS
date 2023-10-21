@@ -39,6 +39,19 @@ mv testdir/files/a testdir/files/b
 assert_eq "$(<testdir/files/b)" "aaa" "Files should overwrite each other (in memory)"
 check_log_success "Files should be able to overwrite files"
 
+
+# FILES & DIRECTORIES
+
+mkdir -p testdir/another/a
+mkdir -p testdir/another/b
+touch testdir/another/b/a
+
+assert_eq "$(mv testdir/another/a testdir/another/b 2>&1)" "mv: cannot overwrite non-directory 'testdir/another/b/a' with directory 'testdir/another/a'" "Folder should not overwrite file (in memory)"
+check_log_success "Directories should not be able to overwrite files"
+
+assert_eq "$(mv testdir/another/b/a testdir/another 2>&1)" "mv: cannot overwrite directory 'testdir/another/a' with non-directory" "File should not overwrite folder (in memory)"
+check_log_success "Files should not be able to overwrite directories"
+
 ./remount.sh
 
 assert_eq "$(ls -x testdir/dstfolder/folder)" "afile" "Should overwrite an empty folder (on disk)"
