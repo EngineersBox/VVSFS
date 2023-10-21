@@ -14,8 +14,9 @@
 #include <linux/types.h>
 #include <linux/version.h>
 
-#include "vvsfs.h"
 #include "buffer_utils.h"
 #include "logging.h"
+#include "vvsfs.h"
 
 static const struct inode_operations vvsfs_dir_inode_operations = {};
+static const struct inode_operations vvsfs_symlink_inode_operations = {};
