@@ -75,6 +75,15 @@ struct vvsfs_dir_entry {
 
 #define VVSFS_SET_MAP_BIT 0x80
 
+extern const struct address_space_operations vvsfs_as_operations;
+extern const struct inode_operations vvsfs_file_inode_operations;
+extern const struct file_operations vvsfs_file_operations;
+extern const struct inode_operations vvsfs_dir_inode_operations;
+extern const struct file_operations vvsfs_dir_operations;
+extern const struct super_operations vvsfs_ops;
+
+extern const struct inode_operations vvsfs_symlink_inode_operations;
+
 // vvsfs_find_free_block
 // @map:  the bitmap that keeps track of free blocks
 // @size: the size of the bitmap.

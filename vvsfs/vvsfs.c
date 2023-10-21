@@ -24,82 +24,8 @@
 #include <linux/version.h>
 
 #include "vvsfs.h"
-
-#define DEBUG 1
-#define LOG_FILE_PATH 0
-
-#if defined(LOG_FILE_PATH) && LOG_FILE_PATH == 1
-#define FILE_FORMAT_PARAMETER "%s:"
-#define FILE_MARKER __FILE__
-#else
-#define FILE_FORMAT_PARAMETER ""
-#define FILE_MARKER
-#endif
-
-#define __LOG(prefix, msg, ...)                                                \
-    printk(prefix "%s(" FILE_FORMAT_PARAMETER "%d) :: " msg,                   \
-           __func__,                                                           \
-           FILE_MARKER __LINE__,                                               \
-           ##__VA_ARGS__)
-#define LOG(msg, ...) __LOG("", msg, ##__VA_ARGS__)
-
-#if defined(DEBUG) && DEBUG == 1
-#define DEBUG_LOG(msg, ...) __LOG("[DEBUG] ", msg, ##__VA_ARGS__)
-#else
-#define DEBUG_LOG(msg, ...) ({})
-#endif
-
-/* Write an unsigned 32-bit integer to a buffer
- *
- * @buf: Byte buffer pointer at the position to
- *       write, aquired from a struct buffer_head
- * @data: Integer to write to buffer
- */
-static void write_int_to_buffer(char *buf, uint32_t data) {
-    DEBUG_LOG("writing to buffer: %u\n", data);
-    buf[0] = (data >> 24) & 0xFF;
-    buf[1] = (data >> 16) & 0xFF;
-    buf[2] = (data >> 8) & 0xFF;
-    buf[3] = data & 0xFF;
-}
-
-/* Read an unsigned 32-bit integer from a buffer
- *
- * @buf: Byte buffer pointer at the position to read
- *       from, aquired from a struct buffer_head
- *
- * @return: (uint32_t) read integer value
- */
-static uint32_t read_int_from_buffer(char *buf) {
-    // Because some genius decided to use a char type to represent a byte in
-    // the struct buffer_head b_data field (yes thats a signed data type with
-    // potentially variable length of either 8 or 16 bits), we have to be very
-    // careful with reading signed data from the buffer. Because unsigned data
-    // will become signed. Yeah. Fun. I have no idea why they didnt use a
-    // uint8_t or arch specific intrinsic 8-bit sized type for a byte. Good
-    // thing that struct buffer_head is deprecated in favour of struct bio in
-    // linux >2.6 which DOES properly define an unsigned byte type for the
-    // internal buffer.
-    unsigned char *u_buf = (unsigned char *)buf;
-    uint32_t data = 0;
-    data |= ((uint32_t)u_buf[0]) << 24;
-    data |= ((uint32_t)u_buf[1]) << 16;
-    data |= ((uint32_t)u_buf[2]) << 8;
-    data |= ((uint32_t)u_buf[3]);
-    DEBUG_LOG("read from buffer: %u\n", data);
-    return data;
-}
-
-#define READ_BLOCK_OFF(sb, offset)                                             \
-    sb_bread((sb), vvsfs_get_data_block((offset)))
-#define READ_BLOCK(sb, vi, index) READ_BLOCK_OFF(sb, (vi)->i_data[(index)])
-#define READ_DENTRY_OFF(data, offset)                                          \
-    ((struct vvsfs_dir_entry *)((data) + (offset)*VVSFS_DENTRYSIZE))
-#define READ_DENTRY(bh, offset) READ_DENTRY_OFF((bh)->b_data, offset)
-#define READ_INDIRECT_BLOCK(sb, indirect_bh, i)                                \
-    READ_BLOCK_OFF(sb,                                                         \
-                   read_int_from_buffer((indirect_bh)->b_data +                \
-                                        ((i)*VVSFS_INDIRECT_PTR_SIZE)))
+#include "buffer_utils.h"
+#include "logging.h"
 
 // Avoid using char* as a byte array since some systems may have a 16 bit char
 // type this ensures that any system that has 8 bits = 1 byte will be valid for
@@ -110,14 +36,14 @@ typedef uint8_t *bytearray_t;
 // data to the vfs inode
 static struct kmem_cache *vvsfs_inode_cache;
 
-static struct address_space_operations vvsfs_as_operations;
-static struct inode_operations vvsfs_file_inode_operations;
-static struct file_operations vvsfs_file_operations;
-static struct inode_operations vvsfs_dir_inode_operations;
-static struct file_operations vvsfs_dir_operations;
-static struct super_operations vvsfs_ops;
+static const struct address_space_operations vvsfs_as_operations;
+static const struct inode_operations vvsfs_file_inode_operations;
+static const struct file_operations vvsfs_file_operations;
+static const struct inode_operations vvsfs_dir_inode_operations;
+static const struct file_operations vvsfs_dir_operations;
+static const struct super_operations vvsfs_ops;
 
-static struct inode_operations vvsfs_symlink_inode_operations = {
+static const struct inode_operations vvsfs_symlink_inode_operations = {
     .get_link = page_get_link,
 };
 
