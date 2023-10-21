@@ -71,6 +71,33 @@ struct vvsfs_dir_entry {
     ((VVSFS_BLOCKSIZE /                                                        \
       VVSFS_DENTRYSIZE)) // maximum number of directory entries per block
 
+/* Calculate the number of dentries in the last data
+ * block
+ *
+ * @dir: Directory inode object
+ * @count: Variable used to store count in
+ *
+ * @return: (int) count of dentries
+ */
+#define LAST_BLOCK_DENTRY_COUNT(dir, count)                                    \
+    (count) = ((dir)->i_size / VVSFS_DENTRYSIZE) % VVSFS_N_DENTRY_PER_BLOCK;   \
+    (count) = (count) == 0 ? VVSFS_N_DENTRY_PER_BLOCK : (count)
+
+/* Determine if a given name and inode represent a
+ * non-reserved dentry (e.g. not '.' or '..')
+ *
+ * @name: Name of the dentry
+ * @inumber: Inode number of the dentry
+ * @inode: Parent directory inode
+ *
+ * @return: (int) 1 if not reserved, 0 otherwise
+ */
+#define IS_NON_RESERVED_DENTRY(name, inumber, inode)                           \
+    (inumber) != 0 &&                                                          \
+        ((name)[0] != '.' || (!(name)[1] && (inumber) != (inode)->i_ino) ||    \
+         (name)[1] != '.' || (name)[2])
+
+#define __KERNEL__
 #ifdef __KERNEL__
 
 #define VVSFS_SET_MAP_BIT 0x80
@@ -81,8 +108,51 @@ extern const struct file_operations vvsfs_file_operations;
 extern const struct inode_operations vvsfs_dir_inode_operations;
 extern const struct file_operations vvsfs_dir_operations;
 extern const struct super_operations vvsfs_ops;
-
 extern const struct inode_operations vvsfs_symlink_inode_operations;
+
+// Avoid using char* as a byte array since some systems may have a 16 bit char
+// type this ensures that any system that has 8 bits = 1 byte will be valid for
+// byte array usage irrespective of char sizing.
+typedef uint8_t *bytearray_t;
+
+/* Calculate the data block map index for a given position
+ * within the given inode data blocks.
+ *
+ * @vi: Inode information of the target inode
+ * @sb: Superblock of the filesytsem
+ * @d_pos: Position of the data block within the inode
+ *
+ * @return: (int): 0 or greater if data block exists in
+ *                 inode, error otherwise
+ */
+extern int vvsfs_index_data_block(struct vvsfs_inode_info *vi,
+                                  struct super_block *sb,
+                                  uint32_t d_pos);
+
+/* Given a position into the target inode data blocks,
+ * create and assign a new data block.
+ *
+ * @dir_info: Inode information of target inode
+ * @sb: Superblock of the filesystem
+ * @d_pos: Data block position to create at
+ *
+ * @return: (int) 0 or greater, data block map index,
+ *                error otherwise
+ */
+extern int vvsfs_assign_data_block(struct vvsfs_inode_info *dir_info,
+                                   struct super_block *sb,
+                                   uint32_t d_pos);
+
+// vvsfs_read_dentries - reads all dentries into memory for a given inode
+//
+// @dir: Directory inode to read from
+// @num_dirs: (output) count of dentries
+// @return: (char*) data buffer returned contains all dentry data, this *MUST*
+//                  be freed after use via `kfree(data)`
+//
+// @return: (bytearray_t) data buffer returned contains all dentry data, this
+//          *MUST* be freed after use via `kfree(data)`
+extern bytearray_t vvsfs_read_dentries(struct inode *dir, int *num_dirs);
 
 // vvsfs_find_free_block
 // @map:  the bitmap that keeps track of free blocks
