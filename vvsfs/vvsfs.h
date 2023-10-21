@@ -16,7 +16,8 @@
     (VVSFS_LAST_DIRECT_BLOCK_INDEX * VVSFS_BLOCKSIZE)
 #define VVSFS_MAX_INDIRECT_PTRS ((VVSFS_BLOCKSIZE / VVSFS_INDIRECT_PTR_SIZE))
 #define VVSFS_MAX_INODE_BLOCKS ((VVSFS_N_BLOCKS - 1 + VVSFS_MAX_INDIRECT_PTRS))
-#define VVSFS_MAX_INODE_ENTRIES (VVSFS_IMAP_SIZE * 8)
+#define VVSFS_IMAP_INODES_PER_ENTRY 8
+#define VVSFS_MAX_INODE_ENTRIES (VVSFS_IMAP_SIZE * VVSFS_IMAP_INODES_PER_ENTRY)
 #define VVSFS_MAX_DENTRIES ((VVSFS_N_DENTRY_PER_BLOCK * VVSFS_MAX_INODE_BLOCKS))
 #define VVSFS_MAXFILESIZE ((VVSFS_BLOCKSIZE * VVSFS_MAX_INODE_BLOCKS))
 #define true 1
@@ -72,6 +73,8 @@ struct vvsfs_dir_entry {
 
 #ifdef __KERNEL__
 
+#define VVSFS_SET_MAP_BIT 0x80
+
 // vvsfs_find_free_block
 // @map:  the bitmap that keeps track of free blocks
 // @size: the size of the bitmap.
@@ -91,8 +94,8 @@ static uint32_t vvsfs_find_free_block(uint8_t *map, uint32_t size) {
         for (j = 0; j < 8; ++j) {
             if (i == 0 && j == 0)
                 continue; // skip block 0 -- it is reserved.
-            if ((~map[i]) & (0x80 >> j)) {
-                map[i] = map[i] | (0x80 >> j);
+            if ((~map[i]) & (VVSFS_SET_MAP_BIT >> j)) {
+                map[i] = map[i] | (VVSFS_SET_MAP_BIT >> j);
                 return i * 8 + j;
             }
         }
@@ -104,7 +107,7 @@ static void vvsfs_free_block(uint8_t *map, uint32_t pos) {
     uint32_t i = pos / 8;
     uint8_t j = pos % 8;
 
-    map[i] = map[i] & ~(0x80 >> j);
+    map[i] = map[i] & ~(VVSFS_SET_MAP_BIT >> j);
 }
 
 // mapping from position in an imap to inode number and vice versa.
@@ -164,6 +167,8 @@ struct vvsfs_inode_info {
 };
 
 struct vvsfs_sb_info {
+    uint64_t nblocks; /* max supported blocks */
+    uint64_t ninodes; /* max supported inodes */
     uint8_t *imap; /* inode blocks map */
     uint8_t *dmap; /* data blocks map  */
 };

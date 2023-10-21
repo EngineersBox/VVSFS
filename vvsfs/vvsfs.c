@@ -94,12 +94,12 @@ static uint32_t read_int_from_buffer(char *buf) {
     sb_bread((sb), vvsfs_get_data_block((offset)))
 #define READ_BLOCK(sb, vi, index) READ_BLOCK_OFF(sb, (vi)->i_data[(index)])
 #define READ_DENTRY_OFF(data, offset)                                          \
-    ((struct vvsfs_dir_entry *)((data) + (offset) * VVSFS_DENTRYSIZE))
+    ((struct vvsfs_dir_entry *)((data) + (offset)*VVSFS_DENTRYSIZE))
 #define READ_DENTRY(bh, offset) READ_DENTRY_OFF((bh)->b_data, offset)
 #define READ_INDIRECT_BLOCK(sb, indirect_bh, i)                                \
     READ_BLOCK_OFF(sb,                                                         \
                    read_int_from_buffer((indirect_bh)->b_data +                \
-                                        ((i) * VVSFS_INDIRECT_PTR_SIZE)))
+                                        ((i)*VVSFS_INDIRECT_PTR_SIZE)))
 
 // Avoid using char* as a byte array since some systems may have a 16 bit char
 // type this ensures that any system that has 8 bits = 1 byte will be valid for
@@ -2253,20 +2253,48 @@ static void vvsfs_put_super(struct super_block *sb) {
     }
 }
 
+static uint32_t count_free(uint8_t *map, uint32_t size) {
+    int i;
+    uint8_t j;
+    uint32_t count = 0;
+    for (i = 0; i < size; i++) {
+        for (j = 0; j < 8; j++) {
+            if (i == 0 && j == 0) {
+                continue; // Block 0 is reserved
+            } else if ((~map[i]) & (VVSFS_SET_MAP_BIT >> j)) {
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
 // statfs -- this is currently incomplete.
 // See
 // https://elixir.bootlin.com/linux/v5.15.89/source/fs/ext2/super.c#L1407
 // for various stats that you need to provide.
 static int vvsfs_statfs(struct dentry *dentry, struct kstatfs *buf) {
+    struct super_block *sb;
+    struct vvsfs_sb_info *i_sb;
+    uint64_t id;
     LOG("vvsfs - statfs\n");
-
+    sb = dentry->d_sb;
+    i_sb = sb->s_fs_info;
+    // Retrieve the device id from the superblock device data
+    id = huge_encode_dev(sb->s_bdev->bd_dev);
+    // Convert the raw device id to __kernel_fsid_t
+    buf->f_fsid = u64_to_fsid(id);
+    buf->f_blocks = i_sb->nblocks;
+    buf->f_bfree = count_free(i_sb->dmap, VVSFS_DMAP_SIZE);
+    // We don't have any privilege scoped block access
+    // behaviour so bavail is the same as bfree
+    buf->f_bavail = buf->f_bfree;
+    buf->f_files = i_sb->ninodes;
+    buf->f_ffree = count_free(i_sb->imap, VVSFS_IMAP_SIZE);
     buf->f_namelen = VVSFS_MAXNAME;
     buf->f_type = VVSFS_MAGIC;
     buf->f_bsize = VVSFS_BLOCKSIZE;
-
-    // TODO: fill in other information about the file
-    // system.
-
+    LOG("vvsfs - statfs - done\n");
     return 0;
 }
 
@@ -2312,6 +2340,11 @@ static int vvsfs_fill_super(struct super_block *s, void *data, int silent) {
         LOG("vvsfs - error allocating vvsfs_sb_info");
         return -ENOMEM;
     }
+
+    /* Set max supported blocks */
+    sbi->nblocks = VVSFS_MAXBLOCKS;
+    /* Set max supported inodes */
+    sbi->ninodes = VVSFS_MAX_INODE_ENTRIES;
 
     /* Load the inode map */
     sbi->imap = kzalloc(VVSFS_IMAP_SIZE, GFP_KERNEL);
