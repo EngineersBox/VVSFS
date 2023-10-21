@@ -1,4 +1,5 @@
-obj-m += vvsfs.o 
+obj-m += vvsfs.o
+vvsfs-objs := address_space.o buffer_utils.o bufloc.o dir.o file.o inode.o namei.o vvsfs_main.o
 
 ifndef PWD
 # Some configurations dont export PWD automatically

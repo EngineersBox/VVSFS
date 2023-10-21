@@ -15,8 +15,13 @@
 #include <linux/version.h>
 
 #include "vvsfs.h"
-#include "buffer_utils.h"
 #include "logging.h"
+
+// inode cache -- this is used to attach vvsfs specific inode
+// data to the vfs inode
+static struct kmem_cache *vvsfs_inode_cache;
+
+struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino);
 
 // This implements the super operation for writing a
 // 'dirty' inode to disk Note that this does not sync
@@ -173,7 +178,7 @@ static int vvsfs_statfs(struct dentry *dentry, struct kstatfs *buf) {
 
 // Fill the super_block structure with information
 // specific to vvsfs
-static int vvsfs_fill_super(struct super_block *s, void *data, int silent) {
+int vvsfs_fill_super(struct super_block *s, void *data, int silent) {
     struct inode *root_inode;
     int hblock;
     struct buffer_head *bh;
@@ -323,7 +328,7 @@ static int vvsfs_sync_fs(struct super_block *sb, int wait) {
     return 0;
 }
 
-static const struct super_operations vvsfs_ops = {
+const struct super_operations vvsfs_ops = {
     .statfs = vvsfs_statfs,
     .put_super = vvsfs_put_super,
     .alloc_inode = vvsfs_alloc_inode,

@@ -1,40 +1,6 @@
-#include "buffer_utils.h"
+#include "vvsfs.h"
 
-/* Compare the names of dentries, checks length before comparing
- * name character entries.
- *
- * @name: Dentry name to compare against
- * @target_name: Dentry name that is being searched for
- * @target_name_len: Length of target_name string
- *
- * @return (int) 1 if names match, 0 otherwise
- */
-__attribute__((always_inline)) static inline bool
-namecmp(const char *name, const char *target_name, int target_name_len) {
-    return strlen(name) == target_name_len &&
-           strncmp(name, target_name, target_name_len) == 0;
-}
-
-/* Representation of a location of a dentry within
- * the data blocks.
- */
-typedef struct __attribute__((packed)) bufloc_t {
-    int b_index;                    // Data block index
-    int d_index;                    // Dentry index within data block
-    unsigned flags;                 // Flags used to construct instance
-    struct buffer_head *bh;         // Data block
-    struct vvsfs_dir_entry *dentry; // Matched entry
-} bufloc_t;
-
-/* Persist the struct buffer_head object in bufloc_t
- * without releasing it */
-#define BL_PERSIST_BUFFER (1 << 1)
-/* Persist (not clone) the struct vvsfs_dir_entry
- * object in bufloc_t, dependent on BL_PERSIST_BUFFER
- */
-#define BL_PERSIST_DENTRY (1 << 2)
-/* Determine if a given flag is set */
-#define bl_flag_set(flags, flag) ((flags) & (flag))
+#include "logging.h"
 
 /* Resolves the buffer head and dentry for a given
  * bufloc if they have not already been. This
@@ -54,9 +20,9 @@ typedef struct __attribute__((packed)) bufloc_t {
  *
  * @return: (int) 0 if successful, error otherwise
  */
-static int vvsfs_resolve_bufloc(struct inode *dir,
-                                struct vvsfs_inode_info *vi,
-                                struct bufloc_t *bufloc) {
+int vvsfs_resolve_bufloc(struct inode *dir,
+                         struct vvsfs_inode_info *vi,
+                         struct bufloc_t *bufloc) {
     struct buffer_head *i_bh;
     uint32_t index;
     if (bufloc == NULL) {

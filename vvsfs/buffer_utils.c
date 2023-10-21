@@ -1,4 +1,4 @@
-#include "buffer_utils.h"
+#include "vvsfs.h"
 
 /* Write an unsigned 32-bit integer to a buffer
  *
@@ -6,7 +6,7 @@
  *       write, aquired from a struct buffer_head
  * @data: Integer to write to buffer
  */
-static void write_int_to_buffer(char *buf, uint32_t data) {
+void write_int_to_buffer(char *buf, uint32_t data) {
     buf[0] = (data >> 24) & 0xFF;
     buf[1] = (data >> 16) & 0xFF;
     buf[2] = (data >> 8) & 0xFF;
@@ -20,7 +20,7 @@ static void write_int_to_buffer(char *buf, uint32_t data) {
  *
  * @return: (uint32_t) read integer value
  */
-static uint32_t read_int_from_buffer(char *buf) {
+uint32_t read_int_from_buffer(char *buf) {
     // Because some genius decided to use a char type to represent a byte in
     // the struct buffer_head b_data field (yes thats a signed data type with
     // potentially variable length of either 8 or 16 bits), we have to be very
