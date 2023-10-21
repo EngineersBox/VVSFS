@@ -2015,18 +2015,56 @@ static int vvsfs_rename(struct user_namespace *namespace,
 
     DEBUG_LOG("vvsfs - rename\n");
 
+    // From the man page: If  oldpath and newpath are existing hard links
+    // referring to the same file, then rename() does nothing, and returns a
+    // success status.
+    if (new_inode && new_inode->i_ino == old_inode->i_ino) {
+        DEBUG_LOG("vvsfs - rename - old and new are hard links to same file\n");
+        return 0;
+    }
+
     // Check the filename isn't too long
     if (new_dentry->d_name.len > VVSFS_MAXNAME) {
-        printk("vvsfs - rename - file name too long");
+        DEBUG_LOG("vvsfs - rename - file name too long");
         return -ENAMETOOLONG;
     }
 
-    // Check if we are overwriting a non-empty directory
-    if (new_inode && S_ISDIR(old_inode->i_mode) &&
-        !vvsfs_empty_dir(new_inode)) {
-        DEBUG_LOG(
-            "vvsfs - rename - target exists and is non-empty directory\n");
-        err = -ENOTEMPTY;
+    // From the man page:
+    // RENAME_NOREPLACE: Don't  overwrite  newpath  of the rename.  Return an
+    // error if newpath already exists.
+    if (new_inode && (flags & RENAME_NOREPLACE)) {
+        err = -EEXIST;
+        goto out_err;
+    }
+
+    // From the man page: oldpath can specify a
+    // directory.  In this case, newpath must either not exist, or it must
+    // specify an empty directory
+    if (new_inode && S_ISDIR(old_inode->i_mode)) {
+        // Destination is a non-empty directory
+        if (S_ISDIR(new_inode->i_mode) && !vvsfs_empty_dir(new_inode)) {
+            DEBUG_LOG(
+                "vvsfs - rename - target exists and is non-empty directory\n");
+            err = -ENOTEMPTY;
+            goto out_err;
+        }
+
+        // Destination is a file of any sort
+        if (!S_ISDIR(new_inode->i_mode)) {
+            DEBUG_LOG("vvsfs - rename - cannot overwrite non-directory with "
+                      "directory\n");
+            err = -ENOTDIR;
+            goto out_err;
+        }
+    }
+
+    // From the Linux Programming Interface book, section 18.4:
+    // If oldpath refers to a file other than a directory, then newpath can't
+    // specify the pathname of a directory
+    if (!S_ISDIR(old_inode->i_mode) && new_inode &&
+        S_ISDIR(new_inode->i_mode)) {
+        DEBUG_LOG("vvsfs - rename - cannot overwrite directory with file\n");
+        err = -EISDIR;
         goto out_err;
     }
 
@@ -2072,9 +2110,14 @@ static int vvsfs_rename(struct user_namespace *namespace,
             err = -ENOENT;
             goto out_err;
         }
+
         // Update the dentry to point to the src inode
         dst_loc.dentry->inode_number = src_loc.dentry->inode_number;
         mark_buffer_dirty(dst_loc.bh);
+        // We sync this data to disk now. Although this means that there are now
+        // two dentries pointing to the same inode unnecessarily, it prevents us
+        // ending up in a situation where there newpath is missing. (This
+        // satisfies the requirements in the man page)
         sync_dirty_buffer(dst_loc.bh);
         brelse(dst_loc.bh);
 
