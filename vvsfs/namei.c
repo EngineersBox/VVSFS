@@ -808,6 +808,19 @@ done:
     return newblock;
 }
 
+// vvsfs_reserve_inode_block
+// @map: a bitmap representing inode blocks on disk
+//
+// On success, this function returns a valid inode number and update the
+// corresponding inode bitmap. On failure, it will return 0 (which is an invalid
+// inode number), and leave the bitmap unchanged.
+uint32_t vvsfs_reserve_inode_block(uint8_t *map) {
+    uint32_t i = vvsfs_find_free_block(map, VVSFS_IMAP_SIZE);
+    if (i == 0)
+        return 0;
+    return BNO_TO_INO(i);
+}
+
 // vvsfs_new_inode - find and construct a new inode.
 // @dir: the inode of the parent directory where the new inode is supposed to be
 // attached to.
