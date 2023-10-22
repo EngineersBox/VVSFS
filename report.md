@@ -48,7 +48,7 @@ Once all shifting and operations have been performed with dentries and blocks, t
 
 In order to perform directory removal, we rely on the `vvsfs_unlink` operation implemented as detailed in the above section. But before performing an arbitrary unlink
 on the dentry matching the directory there are checks needed. Specifically, we need to ensure that the dentry is a directory it is empty, this is done by traversing the dentries within the
-directory and verifying that there are none that are not reserved. Reserved implies any of the following:
+directory and verifying that it is empty (only contains reserved entries). Reserved implies any of the following:
 
  1. Is either a `.` or `..` entry (not supported on disk, so not a problem but checked regardless), in the `..` case, we also verify that the parent inode matches the
     inode stored in the dentry.
