@@ -14,8 +14,8 @@
 #include <linux/types.h>
 #include <linux/version.h>
 
-#include "vvsfs.h"
 #include "logging.h"
+#include "vvsfs.h"
 
 struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino);
 
@@ -215,9 +215,9 @@ static int vvsfs_find_entry_indirect(struct vvsfs_inode_info *vi,
  * otherwise and error
  */
 int vvsfs_find_entry(struct inode *dir,
-                            struct dentry *dentry,
-                            unsigned flags,
-                            struct bufloc_t *out_loc) {
+                     struct dentry *dentry,
+                     unsigned flags,
+                     struct bufloc_t *out_loc) {
     struct vvsfs_inode_info *vi;
     struct super_block *sb;
     int result;
@@ -670,6 +670,13 @@ int vvsfs_free_inode_blocks(struct inode *inode) {
 
     DEBUG_LOG("vvsfs - free inode blocks - %lu", inode->i_ino);
 
+    if (inode->i_nlink != 0) {
+        DEBUG_LOG(
+            "vvsfs - free inode blocks called on allocated inode (links %u)",
+            inode->i_nlink);
+        return -EIO;
+    }
+
     vi = VVSFS_I(inode);
     sb = inode->i_sb;
     i_sb = sb->s_fs_info;
@@ -696,6 +703,21 @@ int vvsfs_free_inode_blocks(struct inode *inode) {
                           vi->i_data[VVSFS_LAST_DIRECT_BLOCK_INDEX]);
 free_inode:
     vvsfs_free_inode_block(i_sb->imap, inode->i_ino);
+    return 0;
+}
+
+/* Drops the link count of a given inode and frees the resources if applicable
+ *
+ * @inode: Target inode to drop link count of
+ *
+ * @return: (int) 0 if successful, error otherwise
+ */
+int vvsfs_drop_inode_link(struct inode *inode) {
+    DEBUG_LOG("vvsfs - drop inode link");
+    inode_dec_link_count(inode);
+    if (inode->i_nlink == 0) {
+        return vvsfs_free_inode_blocks(inode);
+    }
     return 0;
 }
 
@@ -1079,7 +1101,7 @@ vvsfs_create(struct mnt_idmap *namespace,
     if (ret != 0) {
         DEBUG_LOG("vvsfs - create - failed to create new entry for intial data "
                   "block\n");
-        vvsfs_free_inode_blocks(inode);
+        vvsfs_drop_inode_link(inode);
         discard_new_inode(inode);
         return ret;
     }
@@ -1360,16 +1382,15 @@ static int vvsfs_unlink(struct inode *dir, struct dentry *dentry) {
                   "entry\n");
         return err;
     }
-    err = vvsfs_free_inode_blocks(inode);
+
+    inode->i_ctime = dir->i_ctime;
+
+    err = vvsfs_drop_inode_link(inode);
     if (err) {
         DEBUG_LOG("vvsfs - unlink - failed to free inode blocks\n");
         return err;
     }
-    inode->i_ctime = dir->i_ctime;
-    DEBUG_LOG("vvsfs - unlink - link count before: %u\n", inode->i_nlink);
-    inode_dec_link_count(inode);
-    DEBUG_LOG("vvsfs - unlink - link count after: %u\n", inode->i_nlink);
-    mark_inode_dirty(inode);
+
     DEBUG_LOG("vvsfs - unlink - done\n");
     return err;
 }
@@ -1508,7 +1529,6 @@ vvsfs_symlink(struct mnt_idmap *namespace,
               struct dentry *dentry,
               const char *symname) {
     struct vvsfs_inode_info *dir_info;
-    int ret;
     int err;
     struct buffer_head *bh;
     struct inode *inode;
@@ -1536,18 +1556,18 @@ vvsfs_symlink(struct mnt_idmap *namespace,
 
     err = page_symlink(inode, symname, strlen(symname) + 1);
     if (err) {
-        vvsfs_free_inode_blocks(inode);
+        vvsfs_drop_inode_link(inode);
         discard_new_inode(inode);
         return err;
     }
 
     // add the file/directory to the parent directory's list
     // of entries -- on disk.
-    ret = vvsfs_add_new_entry(dir, dentry, inode);
-    if (ret != 0) {
-        vvsfs_free_inode_blocks(inode);
+    err = vvsfs_add_new_entry(dir, dentry, inode);
+    if (err != 0) {
+        vvsfs_drop_inode_link(inode);
         discard_new_inode(inode);
-        return ret;
+        return err;
     }
 
     d_instantiate(dentry, inode);
@@ -1599,7 +1619,7 @@ static int vvsfs_mknod(struct user_namespace *mnt_userns,
     // of entries -- on disk.
     ret = vvsfs_add_new_entry(dir, dentry, inode);
     if (ret != 0) {
-        vvsfs_free_inode_blocks(inode);
+        vvsfs_drop_inode_link(inode);
         discard_new_inode(inode);
         return ret;
     }
@@ -1650,15 +1670,13 @@ static int vvsfs_dentry_exchange_inode(struct inode *dir,
     dir->i_mtime = dir->i_ctime = current_time(dir);
     mark_inode_dirty(dir);
 
-    // Drop the link count of the inode that was originally pointed to by this
-    // dentry, so that it can possibly be deleted
+    // Update inode create time
     existing_inode->i_ctime = current_time(existing_inode);
-    DEBUG_LOG("vvsfs - rename - new_inode link count before: %u\n",
-              existing_inode->i_nlink);
-    inode_dec_link_count(existing_inode);
-    DEBUG_LOG("vvsfs - rename - new_inode link count after: %u\n",
-              existing_inode->i_nlink);
-    mark_inode_dirty(existing_inode);
+
+    // Drop the link count of the inode that was originally pointed to by this
+    // dentry
+    vvsfs_drop_inode_link(existing_inode);
+
     return 0;
 }
 
