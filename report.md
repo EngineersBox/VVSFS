@@ -104,12 +104,12 @@ these are not easy to implement within Kernel modules and don't add any signific
 
 ## Indirect Blocks
 
-There are three main areas that need to change to support indirect blocks, listing dentries, adding a new dentry and unlinking a dentry. In the first case of listing dentries,
-this is the most straight forward. Instead of previously iterating over all the blocks in `i_data`, we traverse only the first 14 and load the dentries into memory,
-then we check if a 15th exists (indicating indirect blocks are present), which is then buffered. Then we perform the same iteration over the block addresses within the
+There are three main areas that need to change to support indirect blocks: listing dentries, adding a new dentry and unlinking a dentry. 
+
+The first case of listing dentries is the most straightforward. Previously, we iterated over all the blocks in `i_data`; now, we traverse only the first 14 and load the dentries into memory. Then, we check if a 15th exists (indicating indirect blocks are present), which is then buffered. Next, we perform the same iteration over the block addresses within the
 indirect block (via offset using `sizeof(uint32_t) * <iteration count>`). The iteration count (inclusive) is determined by subtracting 15 from the total block count.
-We then traverse all dentries within each block, iterating 8 (dentries per block) times per block until the last entry where we use the total dentry cout modulo 8
-as the limit. Note that due to the conventions of the code, there will never be a case where the indirect block is allocated with zero block entries within it.
+We then traverse through the dentries within each block, iterating 8 times (no. dentries) per block until the last entry where we use the total dentry count modulo 8
+as the limit. Note that due to our coding conventions, there will never be a case where the indirect block is allocated with zero block entries within it.
 
 When adding a new dentry, we first calculate the new block position and dentry offset using the following:
 
@@ -124,19 +124,17 @@ first determines if we are allocating a direct block, in which case it does and 
 check if we have an indirect block allocated already, if we don't then it is created. Next we create a new block to store as the first indirect block and put
 it's address in the indirect block. Lastly we return the first indirect block address.
 
-If we don't need a new block, we call to `vvsfs_index_data_block` to get retrieve the data block address for the block associated wtih `new_dentry_block_pos`.
-After this, we buffer the block, and write the dentry to the offset denoted by `new_dentry_block_off` which is guaranteed to be free, semantically guaranteed
-by the logic flow that is.
+If we don't need a new block, we call to `vvsfs_index_data_block` to retrieve the data block address for the block associated wtih `new_dentry_block_pos`.
+After this, we buffer the block, and write the dentry to the offset denoted by `new_dentry_block_off` which is guaranteed to be free, semantically guaranteed by our code's logical flow.
 
-From here on out, we initialise the dentry with the required data as necessary, name, inode number, etc.
+From here on out, we initialise the dentry with the required data as necessary, including name, inode number, etc.
 
-Lastly, unlinking a dentry is a somewhat interesting set of changes. We need to extend the shifting behaviour to work with so-called spatially-disconnected
-contiguous arrays. That is, the indirect and direct blocks are continugous notionally, as an array, whereby the indirect blocks require more calculation and
-logic to index into. We need to support three main cases for dentry movement using indirect blocks:
+Lastly, unlinking a dentry requires an interesting set of changes. We need to extend our previous 'dentry shifting' implementation to work with spatially-discontiguous (but logically contiguous) arrays. That is, the indirect and direct blocks are continugous notionally, as an array, whereby the indirect blocks require more calculation and
+logic to index into. We need to support three main cases, for dentry movement between:
 
- 1. Direct only (using previous logic)
- 2. Indirect only, dentry moves between indirect blocks
- 3. Indirect to direct, dentry moves between indirect and direct blocks.
+ 1. Direct blocks only (using existing logic)
+ 2. Indirect only (dentry moves between indirect blocks)
+ 3. Indirect to direct (dentry moves between indirect and direct blocks)
 
 The first case is straightforward, as we can check the block count, if it is less than 15, we delegate to the old logic. In the second case, we check that the block
 index (stored in `struct bufloc_t` passed as an argument from `vvsfs_find_entry`), is greater than or equal to 15, in which case we are only moving dentries within
@@ -145,13 +143,12 @@ the same logic from the old direct-only implementation, but buffer both direct a
 
 ![Indirect to indirect](./figures/indirect_to_indirect.png)
 
-In the case and thirs cases, a situation exists where the only dentry of the last (but not only) indirect block is moved, requiring deallocation of that indirect
+In the second and third cases, a situation exists where the only remaining dentry of the last (but not only) indirect block is moved, requiring deallocation of that indirect
 block but not the indirect addresses block.
 
 ![Indirect to direct](./figures/indirect_to_direct.png)
 
-Again for the second and third cases, one last point of complexity is checking if we are moving the only dentry in the only indirect block to a direct block. In
-this case we deallocate the first indirect block and the last direct block (indirect addresses block).
+Another possibility in the second and third cases is that we could move the only dentry in the only indirect block to a direct block. In this case, it is necessary to deallocate both the first indirect block and the 15th direct block (which is the indirect addresses block).
 
 ![Indirect last to direct](./figures/indirect_last_to_direct.png)
 
@@ -159,34 +156,30 @@ this case we deallocate the first indirect block and the last direct block (indi
 
 ## Hardlinks
 
-At this stage, our code was based on the asumption that any given file can only be referenced from a single place. That is, all inodes persist a link count of 1, to
-themselves. The most notable methods affected by this assumption are `vvsfs_rename` and `vvsfs_unlink`. In these places, where links are decremented, we updated them
-to use a common method that decrements the link acount and conditionally freeds the inode data blocks when that new link count is zero.
+At this stage, our code was based on the asumption that any given file can only be referenced from a single place. That is, all inodes persist a link count of 1, to themselves. The most notable methods affected by this assumption are `vvsfs_rename` and `vvsfs_unlink`, which need to remove a link to an inode. We chose to implement a common method which decrements the link count and conditionally frees the inode data blocks if the new link count is zero.
 
-Having handled the case of links being decremented and them ensuring all resources are released when required, we turned to the case of adding a new hardlink. Specifically,
-reusing the code for creating a new file, additional modifications were made to increment the link count of a given inode via `inode_inc_link_count` and then `ihold` to
-inform the VSF that the link counts for an inode have changed.
+Having handled proper inode destruction when the link count reaches zero, we turned to the case of adding a new hardlink. We reused the code for creating a new file, but additional modifications were made to increment the link count of a given inode via `inode_inc_link_count`. This was followed by an `ihold` to inform the VFS that the link counts for the inode have changed.
 
 ## Symbolic Links
 
 To grasp the initial concepts and implementation details involved with symlink support in a filesystem, we examined the `ext2` and `minixfs` implementations. The
-most notable points was the use of `page_get_link` and `page_symlink` to drive their implementations. We followed suit in terms of implementation, regarding the
-given `file` structure as the target. Though this brought a large complication, that `vvsfs_write_end` assumes `file` is always null. After extensive bug hunting
-in the code we wrote, it was discovered that `page_symlink` alawys called `vvsfs_write_end` with a null file parameter as it utilised anonymous memory maps for the
+most notable points was their use of `page_get_link` and `page_symlink`. We followed this implementation, regarding the
+given `file` structure as the target. However, this brought a large complication, which was that `vvsfs_write_end` assumes `file` is always null. After extensive bug hunting
+in our code, we discovered that `page_symlink` always calls `vvsfs_write_end` with a null file parameter as it utilised anonymous memory maps for the
 file itself. In order to fix this, we changed the usage of `file->f_inode` to `mapping->host` to retrieve the inode pointer. This was reported to the 
-[forum](https://edstem.org/au/courses/12685/discussion/1639912) which lead to it being fixed upstream in the project.
+[forum](https://edstem.org/au/courses/12685/discussion/1639912) which lead to it being fixed upstream in the assignment template.
 
-In terms of implementation, the core process is to create a new inode utilising the `S_IFLNK` to mark it as a symlink. Then invoking `page_symlink` to create an new
+To implement symlinks, we created a new inode utilising the `S_IFLNK` flag to mark it as a symlink. Then, we invoked `page_symlink` to create a new
 anonymous memory map and write the symbol name (the original file location) to it, completing the link. Lastly, a dentry is created in the parent directory of the
-symlink location to act as the binding between the anomymous page in the inode and the parent directory through a dentry.
+symlink location to act as the binding between the anomymous page in the inode and the parent directory.
 
 ## Special Devices
 
-Implementing special devices was very similar to the third basicline task of storing more attributes. This is because we simply needed to store a new attribute `i_rdev`, update the `iget` method to correctly instantiate a new inode, and update the `vvsfs_write_inode` to sync this new information to the disk. After this we created the `vvsfs_mknod` basic of `vvsfs_create` and updated the `vvsfs_new_inode` helper method to be able to create a special node.
+Implementing special devices was very similar to the third baseline task of storing more attributes. This is because we simply needed to store a new attribute `i_rdev`, update the `iget` method to correctly instantiate a new inode, and update the `vvsfs_write_inode` to sync this new information to the disk. After this we created `vvsfs_mknod` based on `vvsfs_create`, and updated the `vvsfs_new_inode` helper method to be able to create a special node.
 
 # Testing
 
-We created our own test suite (found in vvsfs/vvsfs_tests), which can be run using the script `run_all_tests.sh`. The suite is composed of a set of helper scripts that provide automatic generation of a test environment, and an [assertion framework](https://github.com/torokmark/assert.sh/blob/main/assert.sh) to provide nice error messages. We used this suite as part of a test driven development methodology (where we would create tests for expected behaviour and build new features to make them pass), as well as for regression testing (whenever we discovered/fixed a bug, we would write a new test to prevent it from occuring again).
+We created our own test suite (found in `vvsfs/vvsfs_tests`), which can be run using the script `run_all_tests.sh`. The suite is composed of a set of helper scripts that provide automatic generation of a test environment, and an [assertion framework](https://github.com/torokmark/assert.sh/blob/main/assert.sh) to provide nice error messages. We used this suite as part of a test driven development methodology (where we would create tests for expected behaviour and build new features to make them pass), as well as for regression testing (whenever we discovered/fixed a bug, we would write a new test to prevent it from occuring again).
 
 There is one bug found by our test suite which we were unable to fix before submission - the assertion on line 60 of `test_mv_overwrite.sh`. This test involves creating two files in the same directory, and then renaming one to the other, causing an overwrite. Our assertions to check that the move was successful initially pass, however after a remount, the destination file contents are wiped. This behaviour is non-deterministic, and usually does not occur until the test suite has been run 3-4 times on a fresh VM image. Our investigations have led us to believe that the provided template code allocates the same data block twice in some cases; however despite extensive attempts by all of our team members and our tutor (Felix) to try and diagnose the issue, we were unfortunately unable make any progress.
 
