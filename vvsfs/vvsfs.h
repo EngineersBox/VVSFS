@@ -338,12 +338,7 @@ static void vvsfs_free_block(uint8_t *map, uint32_t pos) {
 // On success, this function returns a valid inode number and update the
 // corresponding inode bitmap. On failure, it will return 0 (which is an invalid
 // inode number), and leave the bitmap unchanged.
-static uint32_t vvsfs_reserve_inode_block(uint8_t *map) {
-    uint32_t i = vvsfs_find_free_block(map, VVSFS_IMAP_SIZE);
-    if (i == 0)
-        return 0;
-    return BNO_TO_INO(i);
-}
+extern uint32_t vvsfs_reserve_inode_block(uint8_t *map);
 
 __attribute__((always_inline))
 static inline void vvsfs_free_inode_block(uint8_t *map, uint32_t ino) {
