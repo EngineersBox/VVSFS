@@ -87,9 +87,7 @@ set the nanoseconds to 0 (`tv_nsec` field on a time) to be consistent with `ext2
 inverse, writing the fields from inode to disk inode. Lastly, we did not implement `setattr/getattr` since there was nothing additional we desired above the generic
 VSF implementation.
 
-During the initial development of the inode attributes, position dependent behaviour was not accounted for in the struct packing for inodes. Given we are writing inodes
-with the full size (not truncated to minimal packing size), we instead chose not to pad the struct prior to writing to disk. Thus we write to the precise field position
-according to the struct layout (assuming default packing) and read as such. This also allows to to ensure full binay compatibility with the default VVSFS implementation.
+During the initial development of the inode attributes, position dependent behaviour was not accounted for in the struct packing for inodes. This problem was encountered due to attempting to order the fields like Minix. This caused subtle bugs that caused data corruption, to combat this we stored the new feilds after the provided fields. This also allows to to ensure full binay compatibility with the default VVSFS implementation, with the only consequence being potentially weird statisical data.
 
 Another key point is that we discovered that the Linux kernel has provisions to prevent disk thrashing when updating the `atime` field often. In order
 to override this behaviour and force the kernel to write through to disk, the `strictatime` parameter was included as a mounting option for out testing scripts.
