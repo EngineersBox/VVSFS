@@ -8,27 +8,24 @@ This report discusses the implementation of several operations into VVSFS, the V
 
 ### Unlink
 
-Supporiting unlinking of dentries requires consideration around the behaviour of evicting entries from data blocks and potentially data blocks themselves.
-In order to make this achievable, the unlink is split into two stages:
-1. Find the dentry
-2. Remove the dentry
+Unlinking a dentry from a directory involves not only finding and deleting the dentry, but also potentially deleting the data block containing that dentry. Therefore, our implementation splits `unlink` into two stages:
 
-Supporting find and remove operations is the `struct bufloc_t` implementation which stores block and dentry indices for ease of use. In addition to this, this
-structure also has provisions to allow for the retention of the buffer object and dentry object (dependently) to aid in reducing the need for re-indexing into
-buffers later (handled by flags `BL_PERSIST_BUFFER` and `BL_PERSIST_DENTRY`). These can also be resolved at a later time if necessary.
+1. Finding the dentry
+2. Removing the dentry
 
-The method `vvsfs_find_dentry` is used to search through the data blocks and saturate a `bufloc_t` instance with the relevant information. This is then forwarded
-to the `vvsfs_delete_entry` method to perform the actual removal. Search operations is merely a linear traversal of the blocks bound to the `inode`, attempting to
+To support find and remove operations, we created a helper datatype (called `struct bufloc_t`) which stores block and dentry indices for ease of use. In addition, this structure can optionally retain the buffer object and dentry object (depending on the flags `BL_PERSIST_BUFFER` and `BL_PERSIST_DENTRY`), to avoid having to re-index the buffers later on a subsequent write. These buffers can also be resolved at a later time if necessary.
+
+The method `vvsfs_find_dentry` is used to search through the directory's data blocks and populate a `bufloc_t` instance with the relevant information. Search operations merely involve a linear traversal of the blocks bound to the directory `inode`, attempting to
 match the name and parent inode of a dentry to the target one.
 
-Removing a dentry requires care to be taken around several cases for where the dentry is:
+The `bufloc_t` structure is then forwarded
+to the `vvsfs_delete_entry` method to perform the actual removal. Removing a dentry requires care to be taken in cases where the dentry is the:
 
  1. Last dentry in the last block
  2. Non-last dentry in last block
  3. Any position dentry in non-last block
 
-In the first case, we can simply evict the dentry (by zeroing it) and we are done. After that we consider if there are dentries left, if so we deallocate the block
-and remove it from the `inode->i_data` array.
+In the first case, we can simply evict the dentry (by zeroing it) and we are done. If there are no dentries left in the block, we can also deallocate it by removing it from the `inode->i_data` array.
 
 ![Last block last dentry](./figures/direcct_last_last.png)
 
@@ -37,41 +34,36 @@ then zero the old location of the last dentry in the last block.
 
 ![Last block non-last dentry](./figures/direct_last_non_last.png)
 
-In the last case, we need to move the last dentry from the last block to our current block to fill the hole. This requires multiple buffer locations to be open at once,
-ensuring we move and then zero the old location of the last dentry in the last block.
+In the last case, we need to move the last dentry from the last block to our current block to fill the hole. This requires multiple buffer locations to be open at once, in order to move and then zero the old location of the last dentry in the last block.
 
 ![Non-last block non-last dentry](./figures/direct_non_last_non_last.png)
 
-Once all shifting and operations have been performed with dentries and blocks, the inode matching the dentry is deallocated and returned to the available pool (bitmap).
+Once all shifting and operations have been performed with dentries and blocks, the inode matching the dentry is deallocated (using the bitmap) and returned to the available pool.
 
 ### Directory Removal
 
-In order to perform directory removal, we rely on the `vvsfs_unlink` operation implemented as detailed in the above section. But before performing an arbitrary unlink
-on the dentry matching the directory there are checks needed. Specifically, we need to ensure that the dentry is a directory it is empty, this is done by traversing the dentries within the
-directory and verifying that it is empty (only contains reserved entries). Reserved implies any of the following:
+In order to perform directory removal, we rely on the `vvsfs_unlink` operation discussed above. But before performing an arbitrary unlink
+on the dentry matching the directory, there are some checks needed. Specifically, we need to ensure that the directory is empty, which is done by traversing the dentries within the
+directory and verifying that it is empty (or only contains reserved entries). Reserved implies any of the following:
 
- 1. Is either a `.` or `..` entry (not supported on disk, so not a problem but checked regardless), in the `..` case, we also verify that the parent inode matches the
-    inode stored in the dentry.
+ 1. It is either a `.` or `..` entry (these are not persisted to disk, so are not a problem, but are checked regardless). In the `..` case, we also verify that the parent inode matches the inode stored in the dentry.
  2. Reseved inode number, specifically `0` as the root.
 
-If any of these checks fail, we return `-ENOTDIR` when not a directory and `-ENOTEMPTY` when it is not empty. Assuming these pass, we forward to the `vvsfs_unlink` call
-targetting the dentry associated with the directory to be removed.
+If any of these checks fail, we return `-ENOTDIR` when not a directory and `-ENOTEMPTY` when it is not empty. Assuming these pass, we forward the dentry to the `vvsfs_unlink` call for removal.
 
 ## Renaming
 
-We implement rename operations for files and directories via the `vvsfs_rename` method. Whenever a user runs the `mv` command in their shell, it issues a `renameat2()` syscall, which the VFS resolves to our `vvsfs_rename` method via the `.rename` entry in the `vvsfs_dir_inode_operations` struct.
+We implement rename operations for files and directories via the `vvsfs_rename` method. There are two main cases for the rename operation: those where the destination dentry exists (because there is already a file/folder with the same name in the destination folder), and those where the destination does not exist.
 
-There are two main cases for the rename operation: those where the destination dentry exists (because there is already a file/folder with the same name in the destination folder), and those where the destination does not exist.
+In the simple case, where the destination dentry is not pre-existing, we can simply add a new dentry to the destination folder (setting the inode number to be that of the file to rename), and deallocate the old dentry from the source folder. Since these operations of finding, adding and removing dentries from folders are the same as those needed for the `vvsfs_unlink` function, we reuse many of the helper functions described in the section above. This eliminates code duplication and reduces the chance of bugs, as the dentry addition/removal logic is now tested via a wider variety of usage patterns.
 
-In the simple case, where the destination dentry is not pre-existing, we can simply add a new dentry to the destination folder (setting the inode number to be that of the file to rename), and deallocate the old dentry from the source folder. Since these operations of finding, adding and removing dentries from folders are the same as those needed for the `vvsfs_unlink` function, we reuse many of the helper functions which were previously defined (`vvsfs_find_entry`, `vvsfs_delete_entry_bufloc`, etc). This eliminates code duplication and reduces the chance of bugs, as the dentry addition/removal logic is now tested via a wider variety of usage patterns.
-
-Additional complications can emerge when the destination dentry already exists. There are many rules which govern whether a rename operation is allowed to overwrite an existing file or directory (e.g. depending on whether the destination directoy is empty). We consulted the man page for `rename()` and Michael Kerrisk's book *"The Linux Programming Interface"* to gain a deep understanding of these requirements, and carefully implemented checks to prevent invalid renames. The process of actually renaming the file is relatively similar to beforehand, with the one exception being that it is also necessary to decrement the link count in the existing file's inode. If the destination dentry was they only hard link to the existing file, it's link count will now be zero, which will cause the file to be deleted. This process is illustrated in Figure 1 below.
+Additional complications can emerge when the destination dentry already exists. There are many rules which govern whether a rename operation is allowed to overwrite an existing file or directory (e.g. depending on whether the destination directoy is empty). We consulted the man page for `rename()` and Michael Kerrisk's book *"The Linux Programming Interface"* to gain a deep understanding of these requirements, and carefully implemented checks to prevent invalid renames. The process of actually renaming the file is relatively similar to beforehand, with the one exception being that it is also necessary to decrement the link count in the existing file's inode. If the destination dentry was they only hard link to the existing file, it's link count will now be zero, which causes the file to be deleted. This process is illustrated in Figure 4 below.
 
 ![Renaming a file to overwrite an existing file at the destination](./figures/rename.png)
 
 ## Inode Attributes
 
-As part of the baseline tasks, we've added support for inode attributes. More specifically the following fields:
+As part of the baseline tasks, we've added support for the following inode attributes:
 
  * `GID`: group id
  * `UID`: user id
@@ -79,35 +71,34 @@ As part of the baseline tasks, we've added support for inode attributes. More sp
  * `ctime`: change timestamp
  * `mtime`: modified timestamp
 
-Structurally, the `vvsfs_inode` structure was the only place to update, adding the necessary fields. The current size denoted by the `VVSFS_INODESIZE` already makes
-provision for all potential fields. Thus, no updates to the size of the structure used when writing to memory/disk are needed.
+The `vvsfs_inode` structure was the only place we needed to update, adding in the necessary fields. The current inode size (`VVSFS_INODESIZE`) already
+provisions space for all potential fields, so no updates were needed for the code which handles moving inodes between memory/disk. 
 
 In order to load these fields, we updated the `vvsfs_iget` method to write the `atime/ctime/mtime` fields to the inode structure from the disk inode. Note that we also
-set the nanoseconds to 0 (`tv_nsec` field on a time) to be consistent with `ext2` and `minixfs`. Additionally, the `vvsfs_write_inode` method was updated to perform the
-inverse, writing the fields from inode to disk inode. Lastly, we did not implement `setattr/getattr` since there was nothing additional we desired above the generic
+set the nanoseconds to 0 (`tv_nsec` field on `i_atime`) to be consistent with `ext2` and `minixfs`. Additionally, the `vvsfs_write_inode` method was updated to perform the
+inverse, writing the fields from the VFS inode to the disk inode. Finally, we did not implement `setattr/getattr` since there was nothing additional we desired beyond the generic
 VSF implementation.
 
-During the initial development of the inode attributes, position dependent behaviour was not accounted for in the struct packing for inodes. This problem was encountered due to attempting to order the fields like Minix. This caused subtle bugs that caused data corruption, to combat this we stored the new feilds after the provided fields. This also allows to to ensure full binay compatibility with the default VVSFS implementation, with the only consequence being potentially weird statisical data.
+During the initial development of the inode attributes, position dependent behaviour was not accounted for in the struct packing. This problem was encountered when we originally ordered our fields the same as Minix. This caused subtle bugs and data corruption. To combat this, we stored the new fields after the provided fields. This also ensures full binary compatibility with the default VVSFS implementation, with the only consequence being potentially weird statistical data.
 
-Another key point is that we discovered that the Linux kernel has provisions to prevent disk thrashing when updating the `atime` field often. In order
-to override this behaviour and force the kernel to write through to disk, the `strictatime` parameter was included as a mounting option for out testing scripts.
+During testing, we discovered that the Linux kernel has provisions to prevent disk thrashing when updating the `atime` field often. In order
+to override this behaviour and force the kernel to write through to disk, the `strictatime` parameter was included as a mounting option for our testing scripts.
 
 ## Supporting FS Stats
 
-The `struct kstatfs` layout details many fields that are normally somewhat flexible with creation and mounting options for file systens. However, VVSFS is very simple, as
-the name implies and consequently almost all of the fields are static values that can be assigned directly. Specifically, all of the following fields are statically
+The `struct kstatfs` layout details many fields that are normally dependent on the creation and mounting options for file systens. However, VVSFS is very simple, and consequently almost all of the fields are static values that can be assigned directly. Specifically, all of the following fields are statically
 defined in VVSFS:
 
- * `f_blocks = VVSFS_MAXBLOCKS`, we always configure the FS with the same block count, irrespective of creation configuration
- * `f_files = VVSFS_IMAP_SIZE * VVSFS_IMAP_INODES_PER_ENTRY`, since the bitmaps are 8 bit, using each bit for an inode, this is fixed based on imap size
- * `f_namelen = VVSFS_MAXNAME`, constant for any configuration of VVSFS
- * `f_type = VVSFS_MAGIC`, constant for any configuration of VVSFS
- * `f_bsize = VVSFS_BLOCKSIZE`, static value that is not configurable on mount or creation
+ * `f_blocks = VVSFS_MAXBLOCKS` (we always configure the FS with the same block count)
+ * `f_files = VVSFS_IMAP_SIZE * VVSFS_IMAP_INODES_PER_ENTRY` (the inode bitmap is a fixed size)
+ * `f_namelen = VVSFS_MAXNAME` (constant for any configuration of VVSFS)
+ * `f_type = VVSFS_MAGIC` (VVSFS-specific constant)
+ * `f_bsize = VVSFS_BLOCKSIZE` (static value that is not configurable on mount or creation)
 
-The key fields are `f_bfree` (also `f_bavail = f_bfree` since we have no non-superuser scoped blocks) and `f_ffree` which are saturated by traversing the bitmaps to count
-how many bits are set. This is done with bitmasking and counting while traversing with the map dimensions. It is also possible to do this more efficiently with
-compiler (e.g. GCC `__popcountdi2`) or hardware intrinsics (e.g. x86 `popcnt`) for counting the bits in a fixed sized integer, in this case 8 bits. However,
-these are not easy to manage within Kernel modules and don't add any significant speedups for an uncommon call.
+The key fields are `f_bfree` (which is equal to `f_bavail` since we have no non-superuser scoped blocks) and `f_ffree` which are populated by traversing the bitmaps to count
+how many bits are set. This is done by looping over the bytes, and bitmasking and counting bits. It is also possible to do this more efficiently using
+compiler (e.g. GCC `__popcountdi2`) or hardware intrinsics (e.g. x86 `popcnt`) for counting the set bits in a fixed sized integer. However,
+these are not easy to implement within Kernel modules and don't add any significant speedups for an uncommon syscall.
 
 # Advanced
 
@@ -200,9 +191,10 @@ We created our own test suite (found in vvsfs/vvsfs_tests), which can be run usi
 There is one bug found by our test suite which we were unable to fix before submission - the assertion on line 60 of `test_mv_overwrite.sh`. This test involves creating two files in the same directory, and then renaming one to the other, causing an overwrite. Our assertions to check that the move was successful initially pass, however after a remount, the destination file contents are wiped. This behaviour is non-deterministic, and usually does not occur until the test suite has been run 3-4 times on a fresh VM image. Our investigations have led us to believe that the provided template code allocates the same data block twice in some cases; however despite extensive attempts by all of our team members and our tutor (Felix) to try and diagnose the issue, we were unfortunately unable make any progress.
 
 In addition to our own suite, we used the [pjdfstest](https://github.com/pjd/pjdfstest) filesystem test suite to check our implentation for POSIX compliance and various other edge cases. By the end we passed all tests with the following exceptions:
-    1. Large file (2gb) tests.
-    2. Folder link count checks. These failed because our filesystem does not keep track of the reserved `.` & `..` files in directories, which was an implementation decision we made based [a note posted by Alwen Ed](https://edstem.org/au/courses/12685/discussion/1633469).
-    3. The filesystem does not correctly update `ctime`` on truncation.
-    4. The filesystem does not store high presision time, only seconds like minix & ext2.
 
-Finally, we ran our filesystem through [xfstests](https://github.com/kdave/xfstests) and [fs-fuzz](https://github.com/regehr/fs-fuzz) test suites. This uncovered a large number of concurrency issues which we believe are related to the provided assignment template code. We believe they may be related to the double block allocation issue mentioned above. If we had more time we would try to find the cause and solve these concurrency related problems.
+1. Large file tests (2gb).
+2. Folder link count checks. These failed because our filesystem does not keep track of the reserved `.` & `..` files in directories, which was an implementation decision we made based [a note posted by Alwen on Ed](https://edstem.org/au/courses/12685/discussion/1633469).
+3. The filesystem does not correctly update `ctime` on truncation.
+4. The filesystem does not store high presision time, only seconds like minix & ext2.
+
+Finally, we ran our filesystem through [xfstests](https://github.com/kdave/xfstests) and [fs-fuzz](https://github.com/regehr/fs-fuzz) test suites. This uncovered a large number of concurrency issues which we believe are related to the provided assignment template code. We suspect they may be related to the double block allocation issue mentioned above. If we had more time we would try to find the cause and solve these synchronisation related problems.
