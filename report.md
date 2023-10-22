@@ -176,7 +176,7 @@ inform the VSF that the link counts for an inode have changed.
 
 To grasp the initial concepts and implementation details involved with symlink support in a filesystem, we examined the `ext2` and `minixfs` implementations. The
 most notable points was the use of `page_get_link` and `page_symlink` to drive their implementations. We followed suit in terms of implementation, regarding the
-given `file` structure as the target. Though this brought a large complication, that `vvsfs_write_end` assumes `file` is alwasy null. After extensive bug hunting
+given `file` structure as the target. Though this brought a large complication, that `vvsfs_write_end` assumes `file` is always null. After extensive bug hunting
 in the code we wrote, it was discovered that `page_symlink` alawys called `vvsfs_write_end` with a null file parameter as it utilised anonymous memory maps for the
 file itself. In order to fix this, we changed the usage of `file->f_inode` to `mapping->host` to retrieve the inode pointer. This was reported to the 
 [forum](https://edstem.org/au/courses/12685/discussion/1639912) which lead to it being fixed upstream in the project.
