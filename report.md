@@ -1,12 +1,12 @@
-## Overview
+# Overview
 
 TODO
 
-## Tasks Completed
+# Tasks Completed
 
 TODO
 
-## Testing
+# Testing
 
  * We created our own test suit (vvsfs/vvsfs_tests)
     - This was used to drive test driven design as we could create tests for expected behaviour and build new features.
@@ -19,17 +19,17 @@ TODO
     3. The filesystem does not correctly update ctime on truncate. (TODO: Does anyone want to fix this?)
     4. The filesystem does not store high presision time, only seconds like minix & ext2. (TODO: Does anyone want to fix this?)
 
-## Baseline
+# Baseline
 
-### Unlink Dentries and Removing Directories
-
-TODO
-
-### Renaming
+## Unlink Dentries and Removing Directories
 
 TODO
 
-### Inode Attributes
+## Renaming
+
+TODO
+
+## Inode Attributes
 
 We added support for storing `GID / UID / atime / ctime / mtime`. We acheived this by:
 
@@ -48,22 +48,22 @@ Challenges implementing this feature:
 
   2. During testing it was discovered that the Linux kernel has measures to prevent disk trashing by not updating an inodes `atime` all the time. To override this and force the kernel to always update the times we added `strictatime` to our test mount script.
 
-### Supporting FS Stats
+## Supporting FS Stats
 
 TODO
 
-## Advanced
+# Advanced
 
-### Indirect Blocks
-
-TODO
-
-## Extensions
-
-### Hardlinks and Symbolic Links
+## Indirect Blocks
 
 TODO
 
-### Special Devices
+# Extensions
+
+## Hardlinks and Symbolic Links
+
+TODO
+
+## Special Devices
 
 TODO
