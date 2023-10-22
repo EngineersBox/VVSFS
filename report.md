@@ -31,7 +31,22 @@ TODO
 
 ### Inode Attributes
 
-TODO
+We added support for storing `GID / UID / atime / ctime / mtime`. We acheived this by:
+
+  1. Adding the fields to the `vvsfs_inode` structure.
+
+  2. Loading the data within the `vvsfs_iget` method.
+      - Following Minix / EXT2's lead we set the tv_nsec time to zero.
+
+  3. Syncing the data to disk within the `vvsfs_write_inode` method.
+
+  4. We chose to not implement `setattr / getattr` at this time since we didn't have anything meanful to change from the generic default function provided by the VFS.
+
+Challenges implementing this feature:
+
+  1. During initial development it was discovered that the filesystem was somehow relying on the order of the inital fields in the `vvsfs_inode`. Instead of properly resolving this issue we decided to store the new fields at the end of the struct.
+
+  2. During testing it was discovered that the Linux kernel has measures to prevent disk trashing by not updating an inodes `atime` all the time. To override this and force the kernel to always update the times we added `strictatime` to our test mount script.
 
 ### Supporting FS Stats
 
