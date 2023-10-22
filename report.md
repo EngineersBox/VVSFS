@@ -164,7 +164,12 @@ this case we deallocate the first indirect block and the last direct block (indi
 
 ## Hardlinks and Symbolic Links
 
-TODO
+* To implement hard links we
+  1. Updated other parts of the code base which assumed that a file could only be referenced from one place. (Notably rename & unlink code). 
+  2. Reused the code from creating a new file however, instead of allocating a new inode we used `inode_inc_link_count` & `ihold` to inform the vfs that there were now to links to the inode.
+
+* To implement symlinks we looked through other filesystem implementations and saw they used `page_get_link` & `page_symlink` to drive their implementations. This however come with a large complication. `vvsfs_write_end` assumed that `file` would be non null. After extensive bug hunting in the code we wrote, we discovered that `page_symlink` always called `vvsfs_write_end` with a null file as it uses anynomous mapping. We fixed this by using `mapping->host` instead of `file->f_inode` for getting the inode pointer, we reported [on the forumn](https://edstem.org/au/courses/12685/discussion/1639912) and it was fixed upstream.
+
 
 ## Special Devices
 
