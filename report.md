@@ -192,7 +192,7 @@ symlink location to act as the binding between the anomymous page in the inode a
 
 ## Special Devices
 
-Implementing special devices was very similar to the third basicline task of storing more attributes. This is because we simply needed to store a new attribute `i_rdev`, update the `iget` method to correctly instantiate a new inode, and update the `vvsfs_write_inode` to sync this new information to the disk. After this we creates the `vvsfs_mknod` basic of `vvsfs_create` and updated the `vvsfs_new_inode` helper method to be able to create a special node.
+Implementing special devices was very similar to the third basicline task of storing more attributes. This is because we simply needed to store a new attribute `i_rdev`, update the `iget` method to correctly instantiate a new inode, and update the `vvsfs_write_inode` to sync this new information to the disk. After this we created the `vvsfs_mknod` basic of `vvsfs_create` and updated the `vvsfs_new_inode` helper method to be able to create a special node.
 
 # Testing
 
