@@ -14,8 +14,8 @@
 #include <linux/types.h>
 #include <linux/version.h>
 
-#include "vvsfs.h"
 #include "logging.h"
+#include "vvsfs.h"
 
 // vvsfs_readdir - reads a directory and places the result using filldir, cached
 // in dcache
