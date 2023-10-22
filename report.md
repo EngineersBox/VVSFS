@@ -100,7 +100,7 @@ defined in VVSFS:
  * `f_type = VVSFS_MAGIC`, constant for any configuration of VVSFS
  * `f_bsize = VVSFS_BLOCKSIZE`, static value that is not configurable on mount or creation
 
-The key fields are `f_bfree` (also `f_bavail` since we have no non-superuser scoped blocks) and `f_ffree` which are saturated by traversing the bitmaps to count
+The key fields are `f_bfree` (also `f_bavail = f_bfree` since we have no non-superuser scoped blocks) and `f_ffree` which are saturated by traversing the bitmaps to count
 how many bits are set. This is done with bitmasking and counting while traversing with the map dimensions. It is also possible to do this more efficiently with
 compiler (e.g. GCC `__popcountdi2`) or hardware intrinsics (e.g. x86 `popcnt`) for counting the bits in a fixed sized integer, in this case 8 bits. However,
 these are not easy to manage within Kernel modules and don't add any significant speedups for an uncommon call.
