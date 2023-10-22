@@ -187,4 +187,4 @@ In addition to our own suite, we used the [pjdfstest](https://github.com/pjd/pjd
     3. The filesystem does not correctly update `ctime`` on truncation.
     4. The filesystem does not store high presision time, only seconds like minix & ext2.
 
-Finally, we ran our filesystem through the [xfstests](https://github.com/kdave/xfstests) suite. This uncovered a large number of concurrency issues which we believe are related to the provided assignment template code. We think they may be related to the double block allocation issue mentioned above.
+Finally, we ran our filesystem through [xfstests](https://github.com/kdave/xfstests) and [fs-fuzz](https://github.com/regehr/fs-fuzz) test suites. This uncovered a large number of concurrency issues which we believe are related to the provided assignment template code. We believe they may be related to the double block allocation issue mentioned above. If we had more time we would try to find the cause and solve these concurrency related problems.
