@@ -90,7 +90,20 @@ Challenges implementing this feature:
 
 ## Supporting FS Stats
 
-TODO
+The `struct kstatfs` layout details many fields that are normally somewhat flexible with creation and mounting options for file systens. However, VVSFS is very simple, as
+the name implies and consequently almost all of the fields are static values that can be assigned directly. Specifically, all of the following fields are statically
+defined in VVSFS:
+
+ * `f_blocks = VVSFS_MAXBLOCKS`, we always configure the FS with the same block count, irrespective of creation configuration
+ * `f_files = VVSFS_IMAP_SIZE * VVSFS_IMAP_INODES_PER_ENTRY`, since the bitmaps are 8 bit, using each bit for an inode, this is fixed based on imap size
+ * `f_namelen = VVSFS_MAXNAME`, constant for any configuration of VVSFS
+ * `f_type = VVSFS_MAGIC`, constant for any configuration of VVSFS
+ * `f_bsize = VVSFS_BLOCKSIZE`, static value that is not configurable on mount or creation
+
+The key fields are `f_bfree` (also `f_bavail` since we have no non-superuser scoped blocks) and `f_ffree` which are saturated by traversing the bitmaps to count
+how many bits are set. This is done with bitmasking and counting while traversing with the map dimensions. It is also possible to do this more efficiently with
+compiler (e.g. GCC `__popcount8di2`) or hardware intrinsics (e.g. x86 `popcnt`) for counting the bits in a fixed sized integer, in this case 8 bits. However,
+these are not easy to manage within Kernel modules and don't add any significant speedups for an uncommon call.
 
 # Advanced
 
