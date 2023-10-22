@@ -71,22 +71,27 @@ Additional complications can emerge when the destination dentry already exists. 
 
 ## Inode Attributes
 
-We added support for storing `GID / UID / atime / ctime / mtime`. We acheived this by:
+As part of the baseline tasks, we've added support for inode attributes. More specifically the following fields:
 
-  1. Adding the fields to the `vvsfs_inode` structure.
+ * `GID`: group id
+ * `UID`: user id
+ * `atime`: access timestamp
+ * `ctime`: change timestamp
+ * `mtime`: modified timestamp
 
-  2. Loading the data within the `vvsfs_iget` method.
-      - Following Minix / EXT2's lead we set the tv_nsec time to zero.
+Structurally, the `vvsfs_inode` structure was the only place to update, adding the necessary fields. The current size denoted by the `VVSFS_INODESIZE` already makes
+provision for all potential fields. Thus, no updates to the size of the structure used when writing to memory/disk are needed.
 
-  3. Syncing the data to disk within the `vvsfs_write_inode` method.
+In order to load these fields, we updated the `vvsfs_iget` method to write the `atime/ctime/mtime` fields to the inode structure from the disk inode. Note that we also
+set the nanoseconds to 0 (`tv_nsec` field on a time) to be consistent with `ext2` and `minixfs`. Additionally, the `vvsfs_write_inode` method was updated to perform the
+inverse, writing the fields from inode to disk inode. Lastly, we did not implement `setattr/getattr` since there was nothing additional we desired above the generic
+VSF implementation.
 
-  4. We chose to not implement `setattr / getattr` at this time since we didn't have anything meanful to change from the generic default function provided by the VFS.
-
-Challenges implementing this feature:
-
-  1. During initial development it was discovered that the filesystem was somehow relying on the order of the inital fields in the `vvsfs_inode`. Instead of properly resolving this issue we decided to store the new fields at the end of the struct.
-
-  2. During testing it was discovered that the Linux kernel has measures to prevent disk trashing by not updating an inodes `atime` all the time. To override this and force the kernel to always update the times we added `strictatime` to our test mount script.
+During the initial development of the inode attributes, position dependent behaviour was not accounted for in the struct packing for inodes. Given we are writing inodes
+with the full size (not truncated to minimal packing size), we instead chose to pad the struct prior to writing to disk. Thus we write to the precise field position according
+to the struct layout (assuming default packing). Another key point is that we discovered that the Linux kernel has provisions to prevent disk thrashing when updating the
+`atime` field often. In order to override this behaviour and force the kernel to write through to disk, the `strictatime` parameter was included as a mounting option for
+out testing scripts.
 
 ## Supporting FS Stats
 
