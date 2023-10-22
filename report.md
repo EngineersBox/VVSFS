@@ -162,11 +162,17 @@ this case we deallocate the first indirect block and the last direct block (indi
 
 # Extensions
 
-## Hardlinks and Symbolic Links
+## Hardlinks
 
-* To implement hard links we
-  1. Updated other parts of the code base which assumed that a file could only be referenced from one place. (Notably rename & unlink code). 
-  2. Reused the code from creating a new file however, instead of allocating a new inode we used `inode_inc_link_count` & `ihold` to inform the vfs that there were now to links to the inode.
+At this stage, our code was based on the asumption that any given file can only be referenced from a single place. That is, all inodes persist a link count of 1, to
+themselves. The most notable methods affected by this assumption are `vvsfs_rename` and `vvsfs_unlink`. In these places, where links are decremented, we updated them
+to use a common method that decrements the link acount and conditionally freeds the inode data blocks when that new link count is zero.
+
+Having handled the case of links being decremented and them ensuring all resources are released when required, we turned to the case of adding a new hardlink. Specifically,
+reusing the code for creating a new file, additional modifications were made to increment the link count of a given inode via `inode_inc_link_count` and then `ihold` to
+inform the VSF that the link counts for an inode have changed.
+
+## Symbolic Links
 
 * To implement symlinks we looked through other filesystem implementations and saw they used `page_get_link` & `page_symlink` to drive their implementations. This however come with a large complication. `vvsfs_write_end` assumed that `file` would be non null. After extensive bug hunting in the code we wrote, we discovered that `page_symlink` always called `vvsfs_write_end` with a null file as it uses anynomous mapping. We fixed this by using `mapping->host` instead of `file->f_inode` for getting the inode pointer, we reported [on the forumn](https://edstem.org/au/courses/12685/discussion/1639912) and it was fixed upstream.
 
