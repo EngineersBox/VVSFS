@@ -878,23 +878,6 @@ vvsfs_new_inode(const struct inode *dir, umode_t mode, dev_t rdev) {
     if (BAD_INO(ino))
         return ERR_PTR(-ENOSPC);
 
-    /*
-        Find a spare data block.
-        By default, a new data block is reserved for the new inode.
-        This is probably a bit wasteful if the file/directory does not need it
-        immediately.
-        The `dno` here represents a data block position within the data bitmap
-        so it's not the actual disk block location.
-     */
-    dno = vvsfs_reserve_data_block(sbi->dmap);
-    if (dno == 0) {
-        vvsfs_free_inode_block(
-            sbi->imap,
-            ino); // if we failed to allocate data block, release
-                  // the inode block. and return an error code.
-        return ERR_PTR(-ENOSPC);
-    }
-
     /* create a new VFS (in memory) inode */
     inode = new_inode(sb);
     if (!inode) {
@@ -944,9 +927,8 @@ vvsfs_new_inode(const struct inode *dir, umode_t mode, dev_t rdev) {
         the VFS inode using the VVSFS_I macro.
      */
     inode_info = VVSFS_I(inode);
-    inode_info->i_db_count = 1;
-    inode_info->i_data[0] = dno;
-    for (i = 1; i < VVSFS_N_BLOCKS; ++i)
+    inode_info->i_db_count = 0;
+    for (i = 0; i < VVSFS_N_BLOCKS; ++i)
         inode_info->i_data[i] = 0;
 
     // Make sure you hash the inode, so that VFS can keep track of its "dirty"
