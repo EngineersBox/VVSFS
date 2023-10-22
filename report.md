@@ -174,8 +174,16 @@ inform the VSF that the link counts for an inode have changed.
 
 ## Symbolic Links
 
-* To implement symlinks we looked through other filesystem implementations and saw they used `page_get_link` & `page_symlink` to drive their implementations. This however come with a large complication. `vvsfs_write_end` assumed that `file` would be non null. After extensive bug hunting in the code we wrote, we discovered that `page_symlink` always called `vvsfs_write_end` with a null file as it uses anynomous mapping. We fixed this by using `mapping->host` instead of `file->f_inode` for getting the inode pointer, we reported [on the forumn](https://edstem.org/au/courses/12685/discussion/1639912) and it was fixed upstream.
+To grasp the initial concepts and implementation details involved with symlink support in a filesystem, we examined the `ext2` and `minixfs` implementations. The
+most notable points was the use of `page_get_link` and `page_symlink` to drive their implementations. We followed suit in terms of implementation, regarding the
+given `file` structure as the target. Though this brought a large complication, that `vvsfs_write_end` assumes `file` is alwasy null. After extensive bug hunting
+in the code we wrote, it was discovered that `page_symlink` alawys called `vvsfs_write_end` with a null file parameter as it utilised anonymous memory maps for the
+file itself. In order to fix this, we changed the usage of `file->f_inode` to `mapping->host` to retrieve the inode pointer. This was reported to the 
+[forum](https://edstem.org/au/courses/12685/discussion/1639912) which lead to it being fixed upstream in the project.
 
+In terms of implementation, the core process is to create a new inode utilising the `S_IFLNK` to mark it as a symlink. Then invoking `page_symlink` to create an new
+anonymous memory map and write the symbol name (the original file location) to it, completing the link. Lastly, a dentry is created in the parent directory of the
+symlink location to act as the binding between the anomymous page in the inode and the parent directory through a dentry.
 
 ## Special Devices
 
