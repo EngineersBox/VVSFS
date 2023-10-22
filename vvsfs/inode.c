@@ -14,8 +14,8 @@
 #include <linux/types.h>
 #include <linux/version.h>
 
-#include "vvsfs.h"
 #include "logging.h"
+#include "vvsfs.h"
 
 struct inode *vvsfs_iget(struct super_block *sb, unsigned long ino);
 

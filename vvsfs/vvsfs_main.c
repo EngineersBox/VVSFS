@@ -7,8 +7,8 @@
  * bitmaps, and using address space operations to simplify read/write.
  */
 
-#include "vvsfs.h"
 #include "logging.h"
+#include "vvsfs.h"
 
 // inode cache -- this is used to attach vvsfs specific inode
 // data to the vfs inode
