@@ -88,10 +88,12 @@ inverse, writing the fields from inode to disk inode. Lastly, we did not impleme
 VSF implementation.
 
 During the initial development of the inode attributes, position dependent behaviour was not accounted for in the struct packing for inodes. Given we are writing inodes
-with the full size (not truncated to minimal packing size), we instead chose to pad the struct prior to writing to disk. Thus we write to the precise field position according
-to the struct layout (assuming default packing). Another key point is that we discovered that the Linux kernel has provisions to prevent disk thrashing when updating the
-`atime` field often. In order to override this behaviour and force the kernel to write through to disk, the `strictatime` parameter was included as a mounting option for
-out testing scripts.
+with the full size (not truncated to minimal packing size), we instead chose not to pad the struct prior to writing to disk. Thus we write to the precise field position
+according to the struct layout (assuming default packing) and read as such. This means that the actual struct layout may not be fully compatible with the full-field 
+implementation. This also allows to to ensure full binay compatibility with the default VVSFS implementation.
+
+Another key point is that we discovered that the Linux kernel has provisions to prevent disk thrashing when updating the `atime` field often. In order
+to override this behaviour and force the kernel to write through to disk, the `strictatime` parameter was included as a mounting option for out testing scripts.
 
 ## Supporting FS Stats
 
