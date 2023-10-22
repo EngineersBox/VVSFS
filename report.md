@@ -30,17 +30,17 @@ Removing a dentry requires care to be taken around several cases for where the d
 In the first case, we can simply evict the dentry (by zeroing it) and we are done. After that we consider if there are dentries left, if so we deallocate the block
 and remove it from the `inode->i_data` array.
 
-![Last block last dentry](./assets/direcct_last_last.png)
+![Last block last dentry](./figures/direcct_last_last.png)
 
 The second case requires moving the last dentry in the last block to fill the hole of the one being evicted. We do this with a memmove to overwrite the target dentry,
 then zero the old location of the last dentry in the last block.
 
-![Last block non-last dentry](./assets/direct_last_non_last.png)
+![Last block non-last dentry](./figures/direct_last_non_last.png)
 
 In the last case, we need to move the last dentry from the last block to our current block to fill the hole. This requires multiple buffer locations to be open at once,
 ensuring we move and then zero the old location of the last dentry in the last block.
 
-![Non-last block non-last dentry](./assets/direct_non_last_non_last.png)
+![Non-last block non-last dentry](./figures/direct_non_last_non_last.png)
 
 Once all shifting and operations have been performed with dentries and blocks, the inode matching the dentry is deallocated and returned to the available pool (bitmap).
 
@@ -67,7 +67,7 @@ In the simple case, where the destination dentry is not pre-existing, we can sim
 
 Additional complications can emerge when the destination dentry already exists. There are many rules which govern whether a rename operation is allowed to overwrite an existing file or directory (e.g. depending on whether the destination directoy is empty). We consulted the man page for `rename()` and Michael Kerrisk's book *"The Linux Programming Interface"* to gain a deep understanding of these requirements, and carefully implemented checks to prevent invalid renames. The process of actually renaming the file is relatively similar to beforehand, with the one exception being that it is also necessary to decrement the link count in the existing file's inode. If the destination dentry was they only hard link to the existing file, it's link count will now be zero, which will cause the file to be deleted. This process is illustrated in Figure 1 below.
 
-![Renaming a file to overwrite an existing file at the destination](figures/rename.drawio.png)
+![Renaming a file to overwrite an existing file at the destination](./figures/rename.png)
 
 ## Inode Attributes
 
@@ -135,17 +135,17 @@ index (stored in `struct bufloc_t` passed as an argument from `vvsfs_find_entry`
 indirect blocks. From here we apply the same logic as the first case, but operate over indirect blocks instead of direct blocks. In the third case, we need to apply
 the same logic from the old direct-only implementation, but buffer both direct and indrect blocks at the same time.
 
-![Indirect to indirect](./assets/indirect_to_indirect.png)
+![Indirect to indirect](./figures/indirect_to_indirect.png)
 
 In the case and thirs cases, a situation exists where the only dentry of the last (but not only) indirect block is moved, requiring deallocation of that indirect
 block but not the indirect addresses block.
 
-![Indirect to direct](./assets/indirect_to_direct.png)
+![Indirect to direct](./figures/indirect_to_direct.png)
 
 Again for the second and third cases, one last point of complexity is checking if we are moving the only dentry in the only indirect block to a direct block. In
 this case we deallocate the first indirect block and the last direct block (indirect addresses block).
 
-![Indirect last to direct](./assets/indirect_last_to_direct.png)
+![Indirect last to direct](./figures/indirect_last_to_direct.png)
 
 # Extensions
 
