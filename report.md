@@ -172,15 +172,14 @@ TODO
 
 # Testing
 
- * We created our own test suite (vvsfs/vvsfs_tests)
-    - We used a test driven development methodology, where we would create tests for expected behaviour and build new features to make them pass.
-    - Additionally we utilised this as a regression test suite to ensure that new code didn't break existing functionality. Furthermore, whenever we fixed problems that were discoved, we built a test to ensure that we didn't break it again.
-    - The suite is composed of a set of helper scripts that provide automatic generation of a test environment, and an [assertion framework](https://github.com/torokmark/assert.sh/blob/main/assert.sh) to provide nice error messages.
+We created our own test suite (found in vvsfs/vvsfs_tests), which can be run using the script `run_all_tests.sh`. The suite is composed of a set of helper scripts that provide automatic generation of a test environment, and an [assertion framework](https://github.com/torokmark/assert.sh/blob/main/assert.sh) to provide nice error messages. We used this suite as part of a test driven development methodology (where we would create tests for expected behaviour and build new features to make them pass), as well as for regression testing (whenever we discovered/fixed a bug, we would write a new test to prevent it from occuring again).
 
- * We used the [pjdfstest](https://github.com/pjd/pjdfstest) filesystem test suite to check our implentation for POSIX compliance and various other edge cases. By the end we passed all tests with the following exceptions:
-    1. The tests for large files (2gb) files.
-    2. The filesystem does not keep track of the `.` & `..` files in directories. As such, we failed the test that checks whether folder link counts are incremented correctly. We chose to ignore this due to [a note posted by Alwen on the course Ed forum](https://edstem.org/au/courses/12685/discussion/1633469).
-    3. The filesystem does not correctly update ctime on truncate. (TODO: Does anyone want to fix this?)
-    4. The filesystem does not store high presision time, only seconds like minix & ext2. (TODO: Does anyone want to fix this?)
+There is one bug found by our test suite which we were unable to fix before submission - the assertion on line 60 of `test_mv_overwrite.sh`. This test involves creating two files in the same directory, and then renaming one to the other, causing an overwrite. Our assertions to check that the move was successful initially pass, however after a remount, the destination file contents are wiped. This behaviour is non-deterministic, and usually does not occur until the test suite has been run 3-4 times on a fresh VM image. Our investigations have led us to believe that the provided template code allocates the same data block twice in some cases; however despite extensive attempts by all of our team members and our tutor (Felix) to try and diagnose the issue, we were unfortunately unable make any progress.
 
- * TODO: Should we discuss the rename bug?
+In addition to our own suite, we used the [pjdfstest](https://github.com/pjd/pjdfstest) filesystem test suite to check our implentation for POSIX compliance and various other edge cases. By the end we passed all tests with the following exceptions:
+    1. Large file (2gb) tests.
+    2. Folder link count checks. These failed because our filesystem does not keep track of the reserved `.` & `..` files in directories, which was an implementation decision we made based [a note posted by Alwen Ed](https://edstem.org/au/courses/12685/discussion/1633469).
+    3. The filesystem does not correctly update `ctime`` on truncation.
+    4. The filesystem does not store high presision time, only seconds like minix & ext2.
+
+Finally, we ran our filesystem through the [xfstests](https://github.com/kdave/xfstests) suite. This uncovered a large number of concurrency issues which we believe are related to the provided assignment template code. We think they may be related to the double block allocation issue mentioned above.
