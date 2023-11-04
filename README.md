@@ -1,8 +1,12 @@
-# COMP3300/COMP6330 -- Assignment 2: File system implementation
+# VVSFS
 
-# Submission deadline
+An implementation of a very very simple filesystem built for a university group project.
 
-Please refer to the Wattle page for this course. 
+Authors:
+
+* @EngineersBox
+* @CraftyDH
+* @angussidney
 
 # Problem description 
 
